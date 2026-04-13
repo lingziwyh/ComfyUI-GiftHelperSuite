@@ -12,6 +12,11 @@ class FastBottomFitOverlay:
     - Support IMAGE batches efficiently with torch ops
     - Optional MASK for alpha compositing
     - Optional built-in top feather fade to soften top-edge cutoffs
+    - Optional packed output:
+        left  = final mask (RGB)
+        right = masked foreground on black background
+      Packed output keeps the resized layer aspect ratio and does NOT pad to
+      the background height. Its size is [B, resized_h, background_w * 2, 3].
 
     IMAGE format in ComfyUI is expected to be [B, H, W, C], float32/float16 in [0, 1]
     MASK format is expected to be [B, H, W] or [H, W]
@@ -49,14 +54,18 @@ class FastBottomFitOverlay:
                         "step": 0.005,
                     },
                 ),
+                "enable_packed_output": (
+                    "BOOLEAN",
+                    {"default": True},
+                ),
             },
             "optional": {
                 "layer_mask": ("MASK",),
             },
         }
 
-    RETURN_TYPES = ("IMAGE", "MASK")
-    RETURN_NAMES = ("image", "mask")
+    RETURN_TYPES = ("IMAGE", "MASK", "IMAGE")
+    RETURN_NAMES = ("image", "mask", "packed_image")
     FUNCTION = "composite"
     CATEGORY = "image/composite"
 
@@ -112,8 +121,7 @@ class FastBottomFitOverlay:
         fade_h = min(fade_h, height)
 
         ramp = torch.ones((height,), device=device, dtype=dtype)
-        if fade_h >= 1:
-            ramp[:fade_h] = torch.linspace(0.0, 1.0, steps=fade_h, device=device, dtype=dtype)
+        ramp[:fade_h] = torch.linspace(0.0, 1.0, steps=fade_h, device=device, dtype=dtype)
 
         return ramp.view(1, 1, height, 1).expand(batch, 1, height, width)
 
@@ -125,6 +133,7 @@ class FastBottomFitOverlay:
         clip_if_too_tall=True,
         enable_top_fade=False,
         top_fade_ratio=0.08,
+        enable_packed_output=True,
         layer_mask=None,
     ):
         bg = self._ensure_image(background_image)
@@ -142,35 +151,46 @@ class FastBottomFitOverlay:
             raise ValueError("Invalid image dimensions.")
 
         # Resize layer to exactly match background width, preserving aspect ratio.
-        new_w = bg_w
-        scale = float(new_w) / float(fg_w)
-        new_h = max(1, int(round(fg_h * scale)))
+        packed_w = bg_w
+        scale = float(packed_w) / float(fg_w)
+        resized_h = max(1, int(round(fg_h * scale)))
 
-        # Convert to BCHW for interpolation.
         fg_bchw = fg.permute(0, 3, 1, 2).contiguous()
-        fg_resized = F.interpolate(fg_bchw, size=(new_h, new_w), mode="bilinear", align_corners=False)
+        fg_resized = F.interpolate(fg_bchw, size=(resized_h, packed_w), mode="bilinear", align_corners=False)
 
         alpha = self._ensure_mask(layer_mask, batch, fg_h, fg_w, device, dtype)
-        alpha = F.interpolate(alpha, size=(new_h, new_w), mode="bilinear", align_corners=False)
+        alpha = F.interpolate(alpha, size=(resized_h, packed_w), mode="bilinear", align_corners=False)
 
         if enable_top_fade:
-            top_fade = self._make_top_fade_mask(batch, new_h, new_w, device, dtype, top_fade_ratio)
+            top_fade = self._make_top_fade_mask(batch, resized_h, packed_w, device, dtype, top_fade_ratio)
             alpha = alpha * top_fade
 
         alpha = (alpha * float(opacity)).clamp(0.0, 1.0)
 
-        # If taller than background, crop from the top so the bottom stays aligned.
-        if new_h > bg_h:
+        # Packed output keeps the resized layer aspect ratio and does not pad to background height.
+        if enable_packed_output:
+            packed_mask = alpha[:, 0:1, :, :].repeat(1, 3, 1, 1).permute(0, 2, 3, 1).contiguous()
+            packed_fg = (fg_resized * alpha).permute(0, 2, 3, 1).contiguous()
+            packed = torch.cat([packed_mask, packed_fg], dim=2).clamp(0.0, 1.0)
+        else:
+            packed = bg.clone()
+
+        # Preview outputs remain constrained by background canvas.
+        preview_h = resized_h
+        fg_preview = fg_resized
+        alpha_preview = alpha
+
+        if preview_h > bg_h:
             if not clip_if_too_tall:
                 raise ValueError(
-                    f"Resized layer height ({new_h}) exceeds background height ({bg_h}). "
+                    f"Resized layer height ({preview_h}) exceeds background height ({bg_h}). "
                     f"Enable clip_if_too_tall to crop from the top automatically."
                 )
-            fg_resized = fg_resized[:, :, new_h - bg_h :, :]
-            alpha = alpha[:, :, new_h - bg_h :, :]
-            new_h = bg_h
+            fg_preview = fg_preview[:, :, preview_h - bg_h :, :]
+            alpha_preview = alpha_preview[:, :, preview_h - bg_h :, :]
+            preview_h = bg_h
 
-        y0 = bg_h - new_h
+        y0 = bg_h - preview_h
         y1 = bg_h
         x0 = 0
         x1 = bg_w
@@ -178,15 +198,15 @@ class FastBottomFitOverlay:
         out = bg.clone()
         out_region = out[:, y0:y1, x0:x1, :]
 
-        fg_region = fg_resized.permute(0, 2, 3, 1).contiguous()
-        a_region = alpha.permute(0, 2, 3, 1).contiguous()
+        fg_region = fg_preview.permute(0, 2, 3, 1).contiguous()
+        a_region = alpha_preview.permute(0, 2, 3, 1).contiguous()
 
         out[:, y0:y1, x0:x1, :] = fg_region * a_region + out_region * (1.0 - a_region)
 
         full_mask = torch.zeros((batch, bg_h, bg_w), device=device, dtype=dtype)
-        full_mask[:, y0:y1, x0:x1] = alpha[:, 0, :, :]
+        full_mask[:, y0:y1, x0:x1] = alpha_preview[:, 0, :, :]
 
-        return (out.clamp(0.0, 1.0), full_mask.clamp(0.0, 1.0))
+        return (out.clamp(0.0, 1.0), full_mask.clamp(0.0, 1.0), packed)
 
 
 NODE_CLASS_MAPPINGS = {
@@ -194,5 +214,5 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "FastBottomFitOverlay": "Fast Bottom Fit Overlay",
+    "FastBottomFitOverlay": "Fast Bottom Fit Overlay (Packed)",
 }
