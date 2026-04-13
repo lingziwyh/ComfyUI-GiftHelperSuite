@@ -10,6 +10,10 @@ This plugin provides several optimized nodes designed specifically for fast batc
 
 本插件提供了一组专为 序列帧高速处理 优化的 ComfyUI 节点，适用于 AI 礼物动效、直播特效制作等场景。
 
+4.13 Update：- 支持生产用 packed 输出：
+  左侧为最终 mask，右侧为应用同一份 mask 的黑底前景
+- packed 输出保持 layer 缩放后的实际画幅比例，不补齐到 background 高度
+
 Included nodes:
 
 Node	Description
