@@ -1,4 +1,3 @@
-
 import math
 from typing import Tuple
 
@@ -18,24 +17,11 @@ def _to_bhwc(image: torch.Tensor) -> torch.Tensor:
     return image.permute(0, 2, 3, 1).contiguous()
 
 
-def _match_batch(a: torch.Tensor, b: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-    ba, bb = a.shape[0], b.shape[0]
-    if ba == bb:
-        return a, b
-    if ba == 1:
-        return a.expand(bb, *a.shape[1:]), b
-    if bb == 1:
-        return a, b.expand(ba, *b.shape[1:])
-    raise ValueError(f"Batch mismatch: {ba} vs {bb}. One input batch must be 1 or both batches equal.")
-
-
 def _box_blur(x: torch.Tensor, radius: int) -> torch.Tensor:
     if radius <= 0:
         return x
     k = radius * 2 + 1
-    # horizontal
     x = F.avg_pool2d(x, kernel_size=(1, k), stride=1, padding=(0, radius), count_include_pad=False)
-    # vertical
     x = F.avg_pool2d(x, kernel_size=(k, 1), stride=1, padding=(radius, 0), count_include_pad=False)
     return x
 
@@ -72,7 +58,6 @@ def _screen(base: torch.Tensor, blend: torch.Tensor) -> torch.Tensor:
 
 
 def _shift_channel_2d(channel: torch.Tensor, dx: int, dy: int) -> torch.Tensor:
-    # channel: [B,1,H,W]
     if dx == 0 and dy == 0:
         return channel
     b, c, h, w = channel.shape
@@ -80,10 +65,50 @@ def _shift_channel_2d(channel: torch.Tensor, dx: int, dy: int) -> torch.Tensor:
     pad_right = max(-dx, 0)
     pad_top = max(dy, 0)
     pad_bottom = max(-dy, 0)
-    padded = F.pad(channel, (pad_left, pad_right, pad_top, pad_bottom), mode="replicate")
+    padded = F.pad(channel, (pad_left, pad_right, pad_top, pad_bottom), mode='replicate')
     x0 = pad_right
     y0 = pad_bottom
     return padded[:, :, y0:y0+h, x0:x0+w]
+
+
+def _apply_color_correction(
+    x: torch.Tensor,
+    natural_saturation: float,
+    saturation: float,
+    contrast: float,
+    brightness: float,
+) -> torch.Tensor:
+
+    if x.shape[1] < 3:
+        if abs(contrast - 1.0) > 1e-6:
+            x = (x - 0.5) * contrast + 0.5
+        if abs(brightness - 0.0) > 1e-6:
+            x = x + brightness
+        return x.clamp(0.0, 1.0)
+
+    # Natural saturation
+    if abs(natural_saturation) > 1e-6:
+        luma = _rgb_to_luma(x)
+        maxc = x.max(dim=1, keepdim=True).values
+        minc = x.min(dim=1, keepdim=True).values
+        sat_map = (maxc - minc).clamp(0.0, 1.0)
+        boost = 1.0 + natural_saturation * (1.0 - sat_map)
+        x = luma + (x - luma) * boost
+
+    # Global saturation
+    if abs(saturation - 1.0) > 1e-6:
+        luma = _rgb_to_luma(x)
+        x = luma + (x - luma) * saturation
+
+    # Contrast
+    if abs(contrast - 1.0) > 1e-6:
+        x = (x - 0.5) * contrast + 0.5
+
+    # Brightness (linear offset)
+    if abs(brightness) > 1e-6:
+        x = x + brightness
+
+    return x.clamp(0.0, 1.0)
 
 
 class FastGiftPostFX:
@@ -104,6 +129,10 @@ class FastGiftPostFX:
                 "enable_sharpen": ("BOOLEAN", {"default": True}),
                 "sharpen_amount": ("FLOAT", {"default": 0.20, "min": 0.0, "max": 2.0, "step": 0.01}),
                 "sharpen_radius": ("INT", {"default": 1, "min": 0, "max": 8, "step": 1}),
+                "natural_saturation": ("FLOAT", {"default": 0.0, "min": -1.0, "max": 2.0, "step": 0.01}),
+                "saturation": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 3.0, "step": 0.01}),
+                "contrast": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 3.0, "step": 0.01}),
+                "brightness": ("FLOAT", {"default": 0.0, "min": -1.0, "max": 1.0, "step": 0.01}),
             }
         }
 
@@ -126,6 +155,10 @@ class FastGiftPostFX:
         enable_sharpen: bool,
         sharpen_amount: float,
         sharpen_radius: int,
+        natural_saturation: float,
+        saturation: float,
+        contrast: float,
+        brightness: float,
     ):
         if image.ndim != 4:
             raise ValueError(f"Expected IMAGE tensor [B,H,W,C], got {tuple(image.shape)}")
@@ -133,7 +166,7 @@ class FastGiftPostFX:
         x = _to_bchw(image).float().clamp(0.0, 1.0)
         original = x
 
-        # 1) Bloom: threshold -> downsample -> blur -> upsample -> screen/add-ish blend
+        # Bloom
         if enable_bloom and bloom_intensity > 0.0 and bloom_radius > 0:
             highlight = _make_highlight_mask(x, bloom_threshold, knee=0.08)
             bloom_src = x * highlight
@@ -156,17 +189,15 @@ class FastGiftPostFX:
             else:
                 bloom = bloom_small
 
-            # Mixed blend: screen keeps highlights pleasant, intensity scales effect.
-            x = _screen(x, bloom * bloom_intensity)
-            x = x.clamp(0.0, 1.0)
+            x = _screen(x, bloom * bloom_intensity).clamp(0.0, 1.0)
 
-        # 2) Sharpen: unsharp mask
+        # Sharpen
         if enable_sharpen and sharpen_amount > 0.0 and sharpen_radius > 0:
             blur = _approx_gaussian_blur(x, sharpen_radius, passes=1)
             high = x - blur
             x = (x + high * sharpen_amount).clamp(0.0, 1.0)
 
-        # 3) Chromatic aberration: fast channel shift
+        # CA
         if enable_ca and ca_amount > 0.0 and x.shape[1] >= 3:
             rad = math.radians(ca_angle_deg)
             dx = int(round(math.cos(rad) * ca_amount))
@@ -186,6 +217,15 @@ class FastGiftPostFX:
             else:
                 x = ca
             x = x.clamp(0.0, 1.0)
+
+        # Color correction
+        x = _apply_color_correction(
+            x,
+            natural_saturation,
+            saturation,
+            contrast,
+            brightness,
+        )
 
         return (_to_bhwc(x),)
 
