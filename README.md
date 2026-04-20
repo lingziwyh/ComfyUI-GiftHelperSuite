@@ -10,6 +10,25 @@ This plugin provides several optimized nodes designed specifically for fast batc
 
 本插件提供了一组专为 序列帧高速处理 优化的 ComfyUI 节点，适用于 AI 礼物动效、直播特效制作等场景。
 
+4.20 Update 🔧 更新后的 Fast Gift PostFX 模块（中英文）
+Fast Gift PostFX（高速后处理节点）
+
+A high-performance post-processing node optimized for short frame sequences (5–10s), designed for AIGC gift animation and livestream effects.
+
+一个专为 5–10 秒短视频序列帧优化的高速后处理节点，适用于 AI 礼物动效与直播特效制作。
+
+✨ 核心功能 / Features
+基础视觉增强（Visual Enhancement）
+Bloom（泛光）
+Chromatic Aberration（色散）
+Sharpen（锐化）
+🎨 色彩校正（Color Correction）
+Natural Saturation（自然饱和度）
+Saturation（饱和度）
+Contrast（对比度）
+Brightness（亮度）
+
+
 4.13 Update：- 支持生产用 packed 输出：
   左侧为最终 mask，右侧为应用同一份 mask 的黑底前景
 - packed 输出保持 layer 缩放后的实际画幅比例，不补齐到 background 高度
