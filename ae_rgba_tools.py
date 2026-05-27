@@ -114,7 +114,7 @@ class AEUnmultRGBA:
         unpremult_rgb = rgb / torch.clamp(alpha, min=eps)
         unpremult_rgb = unpremult_rgb.clamp(0.0, 1.0)
 
-        # Optional: reduce the residual dark contamination left on semi-transparent pixels.
+        # Optional: reduce residual dark contamination left on semi-transparent pixels.
         # Kept off by default because AE-style UnMult should preserve glow softness.
         if despill_black:
             lift = torch.clamp(alpha, min=eps)
@@ -130,10 +130,11 @@ class AEAlphaOverRGBA:
     AE/Photoshop-style RGBA layer compositing for two IMAGE tensors.
 
     Inputs:  background IMAGE + foreground IMAGE, RGB or RGBA, float 0-1.
-    Output:  straight-alpha RGBA IMAGE [B, H, W, 4].
+    Output:  RGBA IMAGE [B, H, W, 4].
 
-    It supports common Photoshop-like blend modes and then composites the foreground
-    over the background with correct alpha handling.
+    v4 adds output_rgb_mode:
+    - premultiplied_rgb_ps_like: visually matches Photoshop/AE layer preview more closely for UnMult glow layers.
+    - straight_alpha_standard: mathematically standard straight-alpha RGBA for continued compositing.
     """
 
     BLEND_MODES = [
@@ -153,6 +154,11 @@ class AEAlphaOverRGBA:
         "exclusion",
         "subtract",
         "divide",
+    ]
+
+    OUTPUT_RGB_MODES = [
+        "premultiplied_rgb_ps_like",
+        "straight_alpha_standard",
     ]
 
     @classmethod
@@ -178,6 +184,9 @@ class AEAlphaOverRGBA:
                 }),
                 "resize_foreground_to_background": (["none", "bilinear", "nearest"], {
                     "default": "none"
+                }),
+                "output_rgb_mode": (cls.OUTPUT_RGB_MODES, {
+                    "default": "premultiplied_rgb_ps_like"
                 }),
             }
         }
@@ -296,6 +305,7 @@ class AEAlphaOverRGBA:
         foreground_opacity: float = 1.0,
         background_opacity: float = 1.0,
         resize_foreground_to_background: str = "none",
+        output_rgb_mode: str = "premultiplied_rgb_ps_like",
     ):
         bg = self._to_rgba(background, "background")
         fg = self._to_rgba(foreground, "foreground")
@@ -329,13 +339,23 @@ class AEAlphaOverRGBA:
         inv_fg_a = 1.0 - fg_a
         out_a = fg_a + bg_a * inv_fg_a
 
+        # Premultiplied result is the actual visual layer result, matching PS/AE preview on black much better,
+        # especially for UnMult glow layers where pixels often have low alpha but very bright RGB.
         premult_rgb = effective_fg_rgb * fg_a + bg_rgb * bg_a * inv_fg_a
+
         eps = 1e-6
-        out_rgb = torch.where(
-            out_a > eps,
-            premult_rgb / torch.clamp(out_a, min=eps),
-            torch.zeros_like(premult_rgb),
-        )
+        if output_rgb_mode == "straight_alpha_standard":
+            # Mathematically standard straight-alpha RGBA.
+            # Good when the result will continue through tools that explicitly expect straight alpha.
+            out_rgb = torch.where(
+                out_a > eps,
+                premult_rgb / torch.clamp(out_a, min=eps),
+                torch.zeros_like(premult_rgb),
+            )
+        else:
+            # PS/AE-preview-like visual RGB.
+            # This prevents low-alpha/high-RGB UnMult pixels from looking overly bright or dirty in ComfyUI previews/exports.
+            out_rgb = premult_rgb
 
         out = torch.cat([out_rgb, out_a], dim=-1).clamp(0.0, 1.0)
         return (out,)
