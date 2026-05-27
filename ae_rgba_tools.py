@@ -132,9 +132,10 @@ class AEAlphaOverRGBA:
     Inputs:  background IMAGE + foreground IMAGE, RGB or RGBA, float 0-1.
     Output:  RGBA IMAGE [B, H, W, 4].
 
-    v4 adds output_rgb_mode:
-    - premultiplied_rgb_ps_like: visually matches Photoshop/AE layer preview more closely for UnMult glow layers.
-    - straight_alpha_standard: mathematically standard straight-alpha RGBA for continued compositing.
+    v5 adds foreground_rgb_mode and output_rgb_mode:
+    - foreground_rgb_mode controls how the foreground RGB is interpreted before blending.
+      premultiply_by_alpha_ps_like is useful for matching Photoshop PNG/normal compositing with UnMult glow layers.
+    - output_rgb_mode controls how the final RGBA RGB is encoded.
     """
 
     BLEND_MODES = [
@@ -154,6 +155,11 @@ class AEAlphaOverRGBA:
         "exclusion",
         "subtract",
         "divide",
+    ]
+
+    FOREGROUND_RGB_MODES = [
+        "premultiply_by_alpha_ps_like",
+        "straight_rgb_standard",
     ]
 
     OUTPUT_RGB_MODES = [
@@ -184,6 +190,9 @@ class AEAlphaOverRGBA:
                 }),
                 "resize_foreground_to_background": (["none", "bilinear", "nearest"], {
                     "default": "none"
+                }),
+                "foreground_rgb_mode": (cls.FOREGROUND_RGB_MODES, {
+                    "default": "premultiply_by_alpha_ps_like"
                 }),
                 "output_rgb_mode": (cls.OUTPUT_RGB_MODES, {
                     "default": "premultiplied_rgb_ps_like"
@@ -305,6 +314,7 @@ class AEAlphaOverRGBA:
         foreground_opacity: float = 1.0,
         background_opacity: float = 1.0,
         resize_foreground_to_background: str = "none",
+        foreground_rgb_mode: str = "premultiply_by_alpha_ps_like",
         output_rgb_mode: str = "premultiplied_rgb_ps_like",
     ):
         bg = self._to_rgba(background, "background")
@@ -329,18 +339,29 @@ class AEAlphaOverRGBA:
         fg_rgb = fg[..., :3]
         fg_a = (fg[..., 3:4] * float(foreground_opacity)).clamp(0.0, 1.0)
 
-        blended_rgb = self._blend_rgb(bg_rgb, fg_rgb, blend_mode)
+        # Photoshop-like PNG/layer behavior for many UnMult glow layers is closer to using
+        # the visually premultiplied foreground color before the normal layer blend.
+        # In practice this means the foreground color contribution is effectively weighted by alpha twice
+        # while the final alpha still follows normal source-over composition.
+        # This avoids low-alpha/high-RGB UnMult haze from washing out the solid subject.
+        if foreground_rgb_mode == "premultiply_by_alpha_ps_like":
+            fg_rgb_for_blend = (fg_rgb * fg_a).clamp(0.0, 1.0)
+        else:
+            fg_rgb_for_blend = fg_rgb
+
+        blended_rgb = self._blend_rgb(bg_rgb, fg_rgb_for_blend, blend_mode)
 
         # Correct handling for semi-transparent backdrops:
         # if the background pixel is fully transparent, non-normal blend modes should not darken/alter the foreground.
         # if it is fully opaque, the foreground receives the full selected blend-mode result.
-        effective_fg_rgb = fg_rgb * (1.0 - bg_a) + blended_rgb * bg_a
+        effective_fg_rgb = fg_rgb_for_blend * (1.0 - bg_a) + blended_rgb * bg_a
 
         inv_fg_a = 1.0 - fg_a
         out_a = fg_a + bg_a * inv_fg_a
 
-        # Premultiplied result is the actual visual layer result, matching PS/AE preview on black much better,
-        # especially for UnMult glow layers where pixels often have low alpha but very bright RGB.
+        # Premultiplied result is the actual visual layer result.
+        # With foreground_rgb_mode=premultiply_by_alpha_ps_like, this matches Photoshop-style normal stacking
+        # much more closely for UnMult glow layers.
         premult_rgb = effective_fg_rgb * fg_a + bg_rgb * bg_a * inv_fg_a
 
         eps = 1e-6
