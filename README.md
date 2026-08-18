@@ -9,6 +9,8 @@ A lightweight ComfyUI utility node suite for **AIGC gift effects, livestream ani
 - 序列帧快速叠加
 - 前景层自动贴底合成
 - 礼物动效快速后处理
+- 绿幕 / 蓝幕专业色键、边缘清理与去溢色
+- 遮罩渐变、首尾淡入淡出、帧切片与序列融合
 - 时间重映射 / 变速处理
 - 黑底光效 Unmult 去黑转 RGBA
 - RGBA 图层按 Photoshop / After Effects 逻辑合成
@@ -21,6 +23,8 @@ A lightweight ComfyUI utility node suite for **AIGC gift effects, livestream ani
 |---|---|---|
 | **Fast Bottom Fit Overlay** | Auto scale foreground to background width and bottom-align it | 前景层自动缩放到底图宽度，并贴底合成 |
 | **Fast Gift PostFX** | Fast Bloom / Chromatic Aberration / Sharpen / Color adjustment | 礼物动效快速泛光、色散、锐化、调色 |
+| **Gift Chroma Master** | GPU chroma key + edge cleaner + advanced despill | 自动 GPU 分块的专业色键、边缘清理和去溢色 |
+| **Gift Mask & Sequence** | Temporal mask ramps, fade, frame slice and sequence blend | 遮罩渐变、首尾淡入淡出、帧切片和序列融合 |
 | **Time Remap Speed Presets** | Retiming frame sequences with common speed presets | 序列帧时间重映射、加速、减速 |
 | **AE Unmult RGBA** | Remove black background like AE UnMult and output RGBA | 黑底光效去黑，输出带透明通道的 RGBA |
 | **AE Alpha Over RGBA** | Composite two RGBA images with blend modes and opacity controls | 两张 RGBA 图层按正常图层逻辑合成，并继续输出 RGBA |
@@ -46,6 +50,10 @@ git clone https://github.com/lingziwyh/ComfyUI-GiftHelperSuite.git
 ```
 
 然后重启 ComfyUI。
+
+No extra pip dependencies are required. The suite uses the PyTorch bundled with ComfyUI.
+
+无需额外安装 pip 依赖，节点直接使用 ComfyUI 自带的 PyTorch。
 
 ---
 
@@ -117,11 +125,20 @@ A high-performance post-processing node optimized for short video frame sequence
 
 #### Design Goal
 
-This node is designed for fast batch processing.  
-It avoids slow per-frame Python loops where possible and uses tensor-based operations for better performance.
+This node is designed for fast batch processing. It automatically follows ComfyUI's device policy, uses CUDA when available, processes long clips in small frame chunks, and returns the result to the input device. Existing workflows keep the same `FastGiftPostFX` node ID and required inputs.
 
-该节点的设计目标是 **高速批处理序列帧**。  
-尽量避免低效的逐帧 Python 循环，适合礼物动效生产中的快速视觉增强。
+该节点的设计目标是 **高速批处理序列帧**。新版会遵守 ComfyUI 的设备设置，在可用时自动使用 CUDA，并把长序列按帧分块处理；旧工作流的节点 ID 和原有必填参数保持不变。
+
+Advanced performance options / 高级性能选项：
+
+- `performance_mode=auto`：推荐；CUDA 可用时自动加速，显存不足时按 `4 → 2 → 1` 帧降低分块，最后安全回退 CPU。
+- `performance_mode=cuda`：强制 CUDA；单帧仍显存不足时明确报错。
+- `performance_mode=cpu`：强制 CPU；仍会分块以降低内存峰值。
+- `gpu_chunk_size=4`：720p 的默认平衡值；显存较小时可改为 `2` 或 `1`。
+
+Reference on the development machine (RTX 5880 Ada, 32 × 720p, excluding decode/save): old CPU path about `0.85 s`; new CPU path about `0.42 s`; new auto CUDA path about `0.09 s`. Actual speed depends on resolution, enabled effects and hardware.
+
+开发机参考（RTX 5880 Ada，32 帧 720p，不含解码和保存）：旧 CPU 路径约 `0.85 秒`，新版 CPU 路径约 `0.42 秒`，新版自动 CUDA 约 `0.09 秒`。实际速度会随分辨率、效果参数和硬件变化。
 
 #### Typical Use Cases
 
@@ -135,7 +152,61 @@ It avoids slow per-frame Python loops where possible and uses tensor-based opera
 
 ---
 
-### 3. Time Remap Speed Presets
+### 3. Gift Chroma Master
+
+`GiftChromaMaster` combines a professional three-stage chroma workflow in one production node:
+
+```text
+Screen key → edge cleaner → linear-light despill
+```
+
+`GiftChromaMaster` 将常用的专业三段式色键流程整合成一个生产节点：
+
+```text
+屏幕键控 → 边缘清理 → 线性光去溢色
+```
+
+It is an independent implementation inspired by the working method of Keylight + Key Cleaner + Advanced Spill Suppressor. It contains no Adobe code and does not claim pixel-identical After Effects output.
+
+这是独立算法实现，目标是复现类似组合拳的工作方式与观感，不包含 Adobe 代码，也不承诺与 After Effects 像素级一致。
+
+| Node ID | 用途 |
+|---|---|
+| `GiftChromaMaster` | 推荐的一体化生产节点；自动 CUDA 分块，输出 straight RGB + 前景 Alpha |
+| `GiftChromaMasterKeyer` | 专家链：幕色估计与基础 Matte |
+| `GiftChromaMasterCleaner` | 专家链：边缘清理、细节恢复、视频降抖 |
+| `GiftChromaMasterDespill` | 专家链：线性光高级去溢色与亮度恢复 |
+| `GiftChromaMasterDiagnostics` | 查看 Matte、边缘、修复、时域与溢色诊断图 |
+| `GiftChromaMasterPreview` | 棋盘、黑、白或自定义背景合成预览 |
+| `GiftChromaMasterPackRGBA` | 把 straight RGB 和前景 Alpha 打包为 RGBA IMAGE |
+
+For normal production, connect the complete ordered video batch to `GiftChromaMaster`. The node uses `performance_mode=auto` and `gpu_chunk_size=8` by default, keeps temporal context across chunks, retries `8 → 4 → 2 → 1` on CUDA OOM, and finally falls back to CPU in auto mode. Expert nodes are intended for short diagnostic batches and follow the tensor's existing device.
+
+日常生产优先把完整连续视频批次接入 `GiftChromaMaster`。主节点默认自动使用 CUDA 和 8 帧分块，跨块保留视频上下文；显存不足会自动尝试 `8 → 4 → 2 → 1`，最后在 auto 模式回退 CPU。专家链适合短批次调试，其设备跟随输入张量。
+
+`foreground_alpha` uses foreground-opacity semantics: `1=foreground`, `0=transparent`. It is not the inverted transparency MASK expected by some built-in ComfyUI nodes; use `GiftChromaMasterPackRGBA` when in doubt. See [README_GIFT_CHROMA_MASTER.md](README_GIFT_CHROMA_MASTER.md) for tuning guidance.
+
+### 4. Gift Mask & Sequence
+
+The former standalone Mask Blend functionality is reimplemented as four vectorized, collision-safe nodes:
+
+| Node ID | 用途 |
+|---|---|
+| `GiftMaskRamp` | 开始帧前为 0，区间内 0→1，结束帧后保持 1 |
+| `GiftMaskFadeInOut` | 首尾对称淡入淡出；可叠加输入 Mask，不会修改上游数据 |
+| `GiftFrameSlice` | 含结束帧的序列切片，自动处理越界和倒序 |
+| `GiftMaskBlend` | 两段序列按 Mask 融合；短 Mask 重复末帧，第二段自动对齐尺寸 |
+
+The new IDs deliberately do not register the generic legacy names `MaskGradientNode`, `FrameSliceNode`, `MaskTransparentInOutNode`, or `SequenceOverlayNode`, so the suite can coexist during migration. Existing JSON workflows can be migrated with this mapping:
+
+```text
+MaskGradientNode          → GiftMaskRamp
+MaskTransparentInOutNode → GiftMaskFadeInOut
+FrameSliceNode            → GiftFrameSlice
+SequenceOverlayNode       → GiftMaskBlend
+```
+
+### 5. Time Remap Speed Presets
 
 A simple frame sequence retiming node for speed changes and timing adjustment.
 
@@ -159,7 +230,7 @@ A simple frame sequence retiming node for speed changes and timing adjustment.
 
 ---
 
-### 4. AE Unmult RGBA
+### 6. AE Unmult RGBA
 
 A black-background removal node inspired by the UnMult workflow in After Effects.
 
@@ -203,7 +274,7 @@ It converts black-background light effects, particles, glows, and atmosphere lay
 
 ---
 
-### 5. AE Alpha Over RGBA
+### 7. AE Alpha Over RGBA
 
 A RGBA compositing node designed to work like a normal layer stack in Photoshop / After Effects.
 
@@ -285,6 +356,18 @@ AE Alpha Over RGBA 多层合成
 ---
 
 ## Recommended Workflow / 推荐使用方式
+
+### Chroma Key Video / 视频色键
+
+```text
+Load Image / video frame batch
+        ↓ IMAGE
+Gift Chroma Master
+        ├─ foreground_rgb ───→ downstream composite / encoder
+        └─ foreground_alpha ─→ Gift Chroma Master Pack RGBA
+```
+
+正式生产时不要把完整长视频都接到棋盘格 Preview；预览节点适合抽帧检查，主分支直接交给合成或编码，可节省额外时间和内存。
 
 ### Black Background Effect to Transparent Overlay
 
@@ -373,6 +456,8 @@ AI 礼物动效和直播特效生产中，经常会遇到大量重复但又很�
 - For best results, use image sequences with consistent resolution.
 - When working with RGBA images, make sure the alpha channel is preserved by upstream nodes.
 - If another custom node package has the same node names, remove duplicates to avoid registration conflicts.
+- The standalone `KeylightChromaKeyHub` can coexist temporarily because Gift Chroma Master uses new IDs. Remove it after migrating workflows if you only want the suite version.
+- The two old `ComfyUI-mask-blend*` folders register duplicate generic IDs with each other. Disable or remove them after migrating to the new `Gift*` IDs.
 - After installing or updating the plugin, restart ComfyUI.
 
 ---
@@ -380,11 +465,21 @@ AI 礼物动效和直播特效生产中，经常会遇到大量重复但又很�
 - 建议输入序列帧保持统一分辨率。
 - 使用 RGBA 工作流时，请确认上游节点没有丢失 alpha 通道。
 - 如果你之前安装过单独版本的 `ComfyUI_Unmult_AE`，建议删除，避免同名节点重复注册。
+- `KeylightChromaKeyHub` 因为节点 ID 不同，可以在迁移期间与本套件共存；工作流迁移完后如果只保留组件包版，可再移出旧目录。
+- 两个旧 `ComfyUI-mask-blend*` 目录彼此会注册重复的通用 ID；迁移到新 `Gift*` 节点后建议禁用或移除。
 - 安装或更新插件后，需要重启 ComfyUI。
 
 ---
 
 ## Update Log / 更新记录
+
+### v0.4
+
+- Added `Gift Chroma Master` with one production node and six expert/helper nodes.
+- Includes only the GPU-accelerated chroma implementation; V3/V4/Args and legacy web code are not included.
+- Added four vectorized Gift Mask & Sequence nodes and fixed one-frame fade, upstream-mask mutation, short-mask and size-alignment issues.
+- Refactored `Fast Gift PostFX` for automatic CUDA frame chunking, OOM fallback, lower memory use and a faster CPU path while preserving its original node ID and required inputs.
+- Added duplicate-registration checks and a full regression test suite.
 
 ### v0.3
 
