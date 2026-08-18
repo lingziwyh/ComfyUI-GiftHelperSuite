@@ -1,0 +1,1250 @@
+{
+  "id": "69f909ca-3c8f-4990-800b-5dacf77ccca5",
+  "revision": 0,
+  "last_node_id": 10,
+  "last_link_id": 14,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "VHS_LoadVideo",
+      "pos": [
+        6689.697257746141,
+        2269.773219889848
+      ],
+      "size": [
+        348.96089021659554,
+        653.4615917237745
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "meta_batch",
+          "name": "meta_batch",
+          "shape": 7,
+          "type": "VHS_BatchManager",
+          "link": null
+        },
+        {
+          "label": "vae",
+          "name": "vae",
+          "shape": 7,
+          "type": "VAE",
+          "link": null
+        },
+        {
+          "label": "video",
+          "name": "video",
+          "type": "COMBO",
+          "widget": {
+            "name": "video"
+          },
+          "link": null
+        },
+        {
+          "label": "force_rate",
+          "name": "force_rate",
+          "type": "FLOAT",
+          "widget": {
+            "name": "force_rate"
+          },
+          "link": null
+        },
+        {
+          "label": "custom_width",
+          "name": "custom_width",
+          "type": "INT",
+          "widget": {
+            "name": "custom_width"
+          },
+          "link": null
+        },
+        {
+          "label": "custom_height",
+          "name": "custom_height",
+          "type": "INT",
+          "widget": {
+            "name": "custom_height"
+          },
+          "link": null
+        },
+        {
+          "label": "frame_load_cap",
+          "name": "frame_load_cap",
+          "type": "INT",
+          "widget": {
+            "name": "frame_load_cap"
+          },
+          "link": null
+        },
+        {
+          "label": "skip_first_frames",
+          "name": "skip_first_frames",
+          "type": "INT",
+          "widget": {
+            "name": "skip_first_frames"
+          },
+          "link": null
+        },
+        {
+          "label": "select_every_nth",
+          "name": "select_every_nth",
+          "type": "INT",
+          "widget": {
+            "name": "select_every_nth"
+          },
+          "link": null
+        },
+        {
+          "label": "format",
+          "name": "format",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "format"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "label": "IMAGE",
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            7
+          ]
+        },
+        {
+          "label": "frame_count",
+          "name": "frame_count",
+          "type": "INT",
+          "links": null
+        },
+        {
+          "label": "audio",
+          "name": "audio",
+          "type": "AUDIO",
+          "links": null
+        },
+        {
+          "label": "video_info",
+          "name": "video_info",
+          "type": "VHS_VIDEOINFO",
+          "links": [
+            9
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-videohelpersuite",
+        "ver": "dabda5423a9df2d17940e619ba9bd6a6344453c7",
+        "Node name for S&R": "VHS_LoadVideo",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.7",
+          "input_ue_unconnectable": {}
+        }
+      },
+      "widgets_values": {
+        "video": "GiftHelperSuite_PostFX_Source_bebfe94a.mp4",
+        "force_rate": 0,
+        "custom_width": 0,
+        "custom_height": 0,
+        "frame_load_cap": 0,
+        "skip_first_frames": 0,
+        "select_every_nth": 1,
+        "format": "None",
+        "videopreview": {
+          "hidden": false,
+          "paused": false,
+          "params": {
+            "filename": "GiftHelperSuite_PostFX_Source_bebfe94a.mp4",
+            "type": "input",
+            "format": "video/mp4",
+            "force_rate": 0,
+            "custom_width": 0,
+            "custom_height": 0,
+            "frame_load_cap": 0,
+            "skip_first_frames": 0,
+            "select_every_nth": 1
+          }
+        }
+      },
+      "widgets_values_named": {
+        "video": "GiftHelperSuite_PostFX_Source_bebfe94a.mp4",
+        "force_rate": 0,
+        "custom_width": 0,
+        "custom_height": 0,
+        "frame_load_cap": 0,
+        "skip_first_frames": 0,
+        "select_every_nth": 1,
+        "format": "None",
+        "choose video to upload": null,
+        "videopreview": {
+          "hidden": false,
+          "paused": false,
+          "params": {
+            "filename": "GiftHelperSuite_PostFX_Source_bebfe94a.mp4",
+            "type": "input",
+            "format": "video/mp4",
+            "force_rate": 0,
+            "custom_width": 0,
+            "custom_height": 0,
+            "frame_load_cap": 0,
+            "skip_first_frames": 0,
+            "select_every_nth": 1
+          }
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "VHS_VideoInfoLoaded",
+      "pos": [
+        6717.739754051475,
+        2976.84287832208
+      ],
+      "size": [
+        256.2392578125,
+        106
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "video_info",
+          "name": "video_info",
+          "type": "VHS_VIDEOINFO",
+          "link": 9
+        }
+      ],
+      "outputs": [
+        {
+          "label": "fps🟦",
+          "name": "fps🟦",
+          "type": "FLOAT",
+          "links": [
+            10,
+            11
+          ]
+        },
+        {
+          "label": "frame_count🟦",
+          "name": "frame_count🟦",
+          "type": "INT",
+          "links": null
+        },
+        {
+          "label": "duration🟦",
+          "name": "duration🟦",
+          "type": "FLOAT",
+          "links": null
+        },
+        {
+          "label": "width🟦",
+          "name": "width🟦",
+          "type": "INT",
+          "links": null
+        },
+        {
+          "label": "height🟦",
+          "name": "height🟦",
+          "type": "INT",
+          "links": null
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-videohelpersuite",
+        "ver": "4ee72c065db22c9d96c2427954dc69e7b908444b",
+        "Node name for S&R": "VHS_VideoInfoLoaded",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.7"
+        }
+      },
+      "widgets_values": {}
+    },
+    {
+      "id": 7,
+      "type": "VHS_VideoCombine",
+      "pos": [
+        8122.205148663555,
+        2290.835993545873
+      ],
+      "size": [
+        337.0548014457154,
+        1033.1184195278076
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "images",
+          "name": "images",
+          "type": "IMAGE",
+          "link": 5
+        },
+        {
+          "label": "audio",
+          "name": "audio",
+          "shape": 7,
+          "type": "AUDIO",
+          "link": null
+        },
+        {
+          "label": "meta_batch",
+          "name": "meta_batch",
+          "shape": 7,
+          "type": "VHS_BatchManager",
+          "link": null
+        },
+        {
+          "label": "vae",
+          "name": "vae",
+          "shape": 7,
+          "type": "VAE",
+          "link": null
+        },
+        {
+          "label": "frame_rate",
+          "name": "frame_rate",
+          "type": "FLOAT",
+          "widget": {
+            "name": "frame_rate"
+          },
+          "link": 10
+        },
+        {
+          "label": "loop_count",
+          "name": "loop_count",
+          "type": "INT",
+          "widget": {
+            "name": "loop_count"
+          },
+          "link": null
+        },
+        {
+          "label": "filename_prefix",
+          "name": "filename_prefix",
+          "type": "STRING",
+          "widget": {
+            "name": "filename_prefix"
+          },
+          "link": null
+        },
+        {
+          "label": "format",
+          "name": "format",
+          "type": "COMBO",
+          "widget": {
+            "name": "format"
+          },
+          "link": null
+        },
+        {
+          "label": "pingpong",
+          "name": "pingpong",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "pingpong"
+          },
+          "link": null
+        },
+        {
+          "label": "save_output",
+          "name": "save_output",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "save_output"
+          },
+          "link": null
+        },
+        {
+          "label": "pix_fmt",
+          "name": "pix_fmt",
+          "type": [
+            "yuv420p",
+            "yuv420p10le"
+          ],
+          "widget": {
+            "name": "pix_fmt"
+          },
+          "link": null
+        },
+        {
+          "label": "crf",
+          "name": "crf",
+          "type": "INT",
+          "widget": {
+            "name": "crf"
+          },
+          "link": null
+        },
+        {
+          "label": "save_metadata",
+          "name": "save_metadata",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "save_metadata"
+          },
+          "link": null
+        },
+        {
+          "label": "trim_to_audio",
+          "name": "trim_to_audio",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "trim_to_audio"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "label": "Filenames",
+          "name": "Filenames",
+          "type": "VHS_FILENAMES",
+          "links": null
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-videohelpersuite",
+        "ver": "449839959f0153fb8a57211a9364c55163935ca9",
+        "Node name for S&R": "VHS_VideoCombine",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.7"
+        }
+      },
+      "widgets_values": {
+        "frame_rate": 24,
+        "loop_count": 0,
+        "filename_prefix": "AnimateDiff",
+        "format": "video/h264-mp4",
+        "pix_fmt": "yuv420p",
+        "crf": 19,
+        "save_metadata": true,
+        "trim_to_audio": false,
+        "pingpong": false,
+        "save_output": false
+      },
+      "widgets_values_named": {
+        "frame_rate": 24,
+        "loop_count": 0,
+        "filename_prefix": "AnimateDiff",
+        "format": "video/h264-mp4",
+        "pix_fmt": "yuv420p",
+        "crf": 19,
+        "save_metadata": true,
+        "trim_to_audio": false,
+        "pingpong": false,
+        "save_output": false
+      }
+    },
+    {
+      "id": 5,
+      "type": "FastBottomFitOverlay",
+      "pos": [
+        7772.336722357775,
+        2414.1932669295406
+      ],
+      "size": [
+        272.3878868523134,
+        194
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "background_image",
+          "name": "background_image",
+          "type": "IMAGE",
+          "link": 3
+        },
+        {
+          "label": "layer_image",
+          "name": "layer_image",
+          "type": "IMAGE",
+          "link": 13
+        },
+        {
+          "label": "layer_mask",
+          "name": "layer_mask",
+          "shape": 7,
+          "type": "MASK",
+          "link": 14
+        },
+        {
+          "label": "opacity",
+          "name": "opacity",
+          "type": "FLOAT",
+          "widget": {
+            "name": "opacity"
+          },
+          "link": null
+        },
+        {
+          "label": "clip_if_too_tall",
+          "name": "clip_if_too_tall",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "clip_if_too_tall"
+          },
+          "link": null
+        },
+        {
+          "label": "enable_top_fade",
+          "name": "enable_top_fade",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "enable_top_fade"
+          },
+          "link": null
+        },
+        {
+          "label": "top_fade_ratio",
+          "name": "top_fade_ratio",
+          "type": "FLOAT",
+          "widget": {
+            "name": "top_fade_ratio"
+          },
+          "link": null
+        },
+        {
+          "label": "enable_packed_output",
+          "name": "enable_packed_output",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "enable_packed_output"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "label": "image",
+          "name": "image",
+          "type": "IMAGE",
+          "links": [
+            5
+          ]
+        },
+        {
+          "label": "mask",
+          "name": "mask",
+          "type": "MASK",
+          "links": null
+        },
+        {
+          "label": "packed_image",
+          "name": "packed_image",
+          "type": "IMAGE",
+          "links": [
+            6
+          ]
+        }
+      ],
+      "properties": {
+        "aux_id": "lingziwyh/ComfyUI-GiftHelperSuite",
+        "ver": "7503a4574c11c3f51d3e06f19e81182729fbd8d3",
+        "Node name for S&R": "FastBottomFitOverlay",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.7"
+        }
+      },
+      "widgets_values": [
+        1,
+        true,
+        true,
+        0.15,
+        true
+      ],
+      "widgets_values_named": {
+        "opacity": 1,
+        "clip_if_too_tall": true,
+        "enable_top_fade": true,
+        "top_fade_ratio": 0.15,
+        "enable_packed_output": true
+      }
+    },
+    {
+      "id": 10,
+      "type": "GiftMaskFadeInOut",
+      "pos": [
+        7765.69827802673,
+        2287.1733379014554
+      ],
+      "size": [
+        280.8736328125,
+        78
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "images",
+          "name": "images",
+          "type": "IMAGE",
+          "link": 12
+        },
+        {
+          "label": "input_mask",
+          "name": "input_mask",
+          "shape": 7,
+          "type": "MASK",
+          "link": null
+        },
+        {
+          "label": "fade_frames",
+          "name": "fade_frames",
+          "type": "INT",
+          "widget": {
+            "name": "fade_frames"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "label": "images",
+          "name": "images",
+          "type": "IMAGE",
+          "links": [
+            13
+          ]
+        },
+        {
+          "label": "mask",
+          "name": "mask",
+          "type": "MASK",
+          "links": [
+            14
+          ]
+        }
+      ],
+      "properties": {
+        "aux_id": "lingziwyh/ComfyUI-GiftHelperSuite",
+        "ver": "800e0e99c30ceae21b680f948927c85dbad10784",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.7"
+        },
+        "Node name for S&R": "GiftMaskFadeInOut"
+      },
+      "widgets_values": [
+        6
+      ],
+      "widgets_values_named": {
+        "fade_frames": 6
+      }
+    },
+    {
+      "id": 4,
+      "type": "LoadImage",
+      "pos": [
+        7077.22857688941,
+        2272.189498982742
+      ],
+      "size": [
+        275.6479222023636,
+        570.6381166075716
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "image",
+          "name": "image",
+          "type": "COMBO",
+          "widget": {
+            "name": "image"
+          },
+          "link": null
+        },
+        {
+          "label": "upload",
+          "name": "upload",
+          "type": "IMAGEUPLOAD",
+          "widget": {
+            "name": "upload"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "label": "IMAGE",
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            3
+          ]
+        },
+        {
+          "label": "MASK",
+          "name": "MASK",
+          "type": "MASK",
+          "links": null
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.18.5",
+        "Node name for S&R": "LoadImage",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.7"
+        }
+      },
+      "widgets_values": [
+        "GiftHelperSuite_Example_Background_213ee241.png",
+        "image"
+      ],
+      "widgets_values_named": {
+        "image": "GiftHelperSuite_Example_Background_213ee241.png",
+        "upload": "image"
+      }
+    },
+    {
+      "id": 8,
+      "type": "VHS_VideoCombine",
+      "pos": [
+        8485.596364316056,
+        2300.6933518284955
+      ],
+      "size": [
+        700.5014106113713,
+        688.0007047874597
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "images",
+          "name": "images",
+          "type": "IMAGE",
+          "link": 6
+        },
+        {
+          "label": "audio",
+          "name": "audio",
+          "shape": 7,
+          "type": "AUDIO",
+          "link": null
+        },
+        {
+          "label": "meta_batch",
+          "name": "meta_batch",
+          "shape": 7,
+          "type": "VHS_BatchManager",
+          "link": null
+        },
+        {
+          "label": "vae",
+          "name": "vae",
+          "shape": 7,
+          "type": "VAE",
+          "link": null
+        },
+        {
+          "label": "frame_rate",
+          "name": "frame_rate",
+          "type": "FLOAT",
+          "widget": {
+            "name": "frame_rate"
+          },
+          "link": 11
+        },
+        {
+          "label": "loop_count",
+          "name": "loop_count",
+          "type": "INT",
+          "widget": {
+            "name": "loop_count"
+          },
+          "link": null
+        },
+        {
+          "label": "filename_prefix",
+          "name": "filename_prefix",
+          "type": "STRING",
+          "widget": {
+            "name": "filename_prefix"
+          },
+          "link": null
+        },
+        {
+          "label": "format",
+          "name": "format",
+          "type": "COMBO",
+          "widget": {
+            "name": "format"
+          },
+          "link": null
+        },
+        {
+          "label": "pingpong",
+          "name": "pingpong",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "pingpong"
+          },
+          "link": null
+        },
+        {
+          "label": "save_output",
+          "name": "save_output",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "save_output"
+          },
+          "link": null
+        },
+        {
+          "label": "pix_fmt",
+          "name": "pix_fmt",
+          "type": [
+            "yuv420p",
+            "yuv420p10le"
+          ],
+          "widget": {
+            "name": "pix_fmt"
+          },
+          "link": null
+        },
+        {
+          "label": "crf",
+          "name": "crf",
+          "type": "INT",
+          "widget": {
+            "name": "crf"
+          },
+          "link": null
+        },
+        {
+          "label": "save_metadata",
+          "name": "save_metadata",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "save_metadata"
+          },
+          "link": null
+        },
+        {
+          "label": "trim_to_audio",
+          "name": "trim_to_audio",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "trim_to_audio"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "label": "Filenames",
+          "name": "Filenames",
+          "type": "VHS_FILENAMES",
+          "links": null
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-videohelpersuite",
+        "ver": "449839959f0153fb8a57211a9364c55163935ca9",
+        "Node name for S&R": "VHS_VideoCombine",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.7"
+        }
+      },
+      "widgets_values": {
+        "frame_rate": 24,
+        "loop_count": 0,
+        "filename_prefix": "AnimateDiff",
+        "format": "video/h264-mp4",
+        "pix_fmt": "yuv420p",
+        "crf": 19,
+        "save_metadata": true,
+        "trim_to_audio": false,
+        "pingpong": false,
+        "save_output": false
+      },
+      "widgets_values_named": {
+        "frame_rate": 24,
+        "loop_count": 0,
+        "filename_prefix": "AnimateDiff",
+        "format": "video/h264-mp4",
+        "pix_fmt": "yuv420p",
+        "crf": 19,
+        "save_metadata": true,
+        "trim_to_audio": false,
+        "pingpong": false,
+        "save_output": false
+      }
+    },
+    {
+      "id": 6,
+      "type": "FastGiftPostFX",
+      "pos": [
+        7422.315557463044,
+        2275.9723534169516
+      ],
+      "size": [
+        276.69921875,
+        466
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "image",
+          "name": "image",
+          "type": "IMAGE",
+          "link": 7
+        },
+        {
+          "label": "enable_bloom",
+          "name": "enable_bloom",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "enable_bloom"
+          },
+          "link": null
+        },
+        {
+          "label": "bloom_threshold",
+          "name": "bloom_threshold",
+          "type": "FLOAT",
+          "widget": {
+            "name": "bloom_threshold"
+          },
+          "link": null
+        },
+        {
+          "label": "bloom_intensity",
+          "name": "bloom_intensity",
+          "type": "FLOAT",
+          "widget": {
+            "name": "bloom_intensity"
+          },
+          "link": null
+        },
+        {
+          "label": "bloom_radius",
+          "name": "bloom_radius",
+          "type": "INT",
+          "widget": {
+            "name": "bloom_radius"
+          },
+          "link": null
+        },
+        {
+          "label": "bloom_downsample",
+          "name": "bloom_downsample",
+          "type": "INT",
+          "widget": {
+            "name": "bloom_downsample"
+          },
+          "link": null
+        },
+        {
+          "label": "enable_ca",
+          "name": "enable_ca",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "enable_ca"
+          },
+          "link": null
+        },
+        {
+          "label": "ca_amount",
+          "name": "ca_amount",
+          "type": "FLOAT",
+          "widget": {
+            "name": "ca_amount"
+          },
+          "link": null
+        },
+        {
+          "label": "ca_angle_deg",
+          "name": "ca_angle_deg",
+          "type": "FLOAT",
+          "widget": {
+            "name": "ca_angle_deg"
+          },
+          "link": null
+        },
+        {
+          "label": "ca_highlight_only",
+          "name": "ca_highlight_only",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "ca_highlight_only"
+          },
+          "link": null
+        },
+        {
+          "label": "enable_sharpen",
+          "name": "enable_sharpen",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "enable_sharpen"
+          },
+          "link": null
+        },
+        {
+          "label": "sharpen_amount",
+          "name": "sharpen_amount",
+          "type": "FLOAT",
+          "widget": {
+            "name": "sharpen_amount"
+          },
+          "link": null
+        },
+        {
+          "label": "sharpen_radius",
+          "name": "sharpen_radius",
+          "type": "INT",
+          "widget": {
+            "name": "sharpen_radius"
+          },
+          "link": null
+        },
+        {
+          "label": "natural_saturation",
+          "name": "natural_saturation",
+          "type": "FLOAT",
+          "widget": {
+            "name": "natural_saturation"
+          },
+          "link": null
+        },
+        {
+          "label": "saturation",
+          "name": "saturation",
+          "type": "FLOAT",
+          "widget": {
+            "name": "saturation"
+          },
+          "link": null
+        },
+        {
+          "label": "contrast",
+          "name": "contrast",
+          "type": "FLOAT",
+          "widget": {
+            "name": "contrast"
+          },
+          "link": null
+        },
+        {
+          "label": "brightness",
+          "name": "brightness",
+          "type": "FLOAT",
+          "widget": {
+            "name": "brightness"
+          },
+          "link": null
+        },
+        {
+          "label": "performance_mode",
+          "name": "performance_mode",
+          "shape": 7,
+          "type": "COMBO",
+          "widget": {
+            "name": "performance_mode"
+          },
+          "link": null
+        },
+        {
+          "label": "gpu_chunk_size",
+          "name": "gpu_chunk_size",
+          "shape": 7,
+          "type": "INT",
+          "widget": {
+            "name": "gpu_chunk_size"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "label": "IMAGE",
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            12
+          ]
+        }
+      ],
+      "properties": {
+        "aux_id": "lingziwyh/ComfyUI-GiftHelperSuite",
+        "ver": "7503a4574c11c3f51d3e06f19e81182729fbd8d3",
+        "Node name for S&R": "FastGiftPostFX",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "input_ue_unconnectable": {},
+          "version": "7.7"
+        }
+      },
+      "widgets_values": [
+        true,
+        0.7,
+        0.35,
+        64,
+        4,
+        true,
+        3.5,
+        0,
+        false,
+        true,
+        0.2,
+        1,
+        0.25,
+        1.05,
+        1.05,
+        0.05,
+        "auto",
+        4
+      ],
+      "widgets_values_named": {
+        "enable_bloom": true,
+        "bloom_threshold": 0.7,
+        "bloom_intensity": 0.35,
+        "bloom_radius": 64,
+        "bloom_downsample": 4,
+        "enable_ca": true,
+        "ca_amount": 3.5,
+        "ca_angle_deg": 0,
+        "ca_highlight_only": false,
+        "enable_sharpen": true,
+        "sharpen_amount": 0.2,
+        "sharpen_radius": 1,
+        "natural_saturation": 0.25,
+        "saturation": 1.05,
+        "contrast": 1.05,
+        "brightness": 0.05,
+        "performance_mode": "auto",
+        "gpu_chunk_size": 4
+      }
+    }
+  ],
+  "links": [
+    [
+      3,
+      4,
+      0,
+      5,
+      0,
+      "IMAGE"
+    ],
+    [
+      5,
+      5,
+      0,
+      7,
+      0,
+      "IMAGE"
+    ],
+    [
+      6,
+      5,
+      2,
+      8,
+      0,
+      "IMAGE"
+    ],
+    [
+      7,
+      1,
+      0,
+      6,
+      0,
+      "IMAGE"
+    ],
+    [
+      9,
+      1,
+      3,
+      9,
+      0,
+      "VHS_VIDEOINFO"
+    ],
+    [
+      10,
+      9,
+      0,
+      7,
+      4,
+      "FLOAT"
+    ],
+    [
+      11,
+      9,
+      0,
+      8,
+      4,
+      "FLOAT"
+    ],
+    [
+      12,
+      6,
+      0,
+      10,
+      0,
+      "IMAGE"
+    ],
+    [
+      13,
+      10,
+      0,
+      5,
+      1,
+      "IMAGE"
+    ],
+    [
+      14,
+      10,
+      1,
+      5,
+      2,
+      "MASK"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ue_links": [],
+    "ds": {
+      "scale": 0.6303940863128962,
+      "offset": [
+        -5933.134781612939,
+        -1716.9761001902057
+      ]
+    },
+    "anomalous_hashes": {},
+    "links_added_by_ue": [],
+    "frontendVersion": "1.49.6",
+    "VHS_latentpreview": true,
+    "VHS_latentpreviewrate": 0,
+    "VHS_MetadataImage": true,
+    "VHS_KeepIntermediate": true
+  },
+  "version": 0.4
+}
