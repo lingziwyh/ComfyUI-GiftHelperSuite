@@ -14,17 +14,53 @@ from .ae_rgba_tools import (
     NODE_CLASS_MAPPINGS as AE_RGBA_NODE_CLASS_MAPPINGS,
     NODE_DISPLAY_NAME_MAPPINGS as AE_RGBA_NODE_DISPLAY_NAME_MAPPINGS,
 )
+from .gift_mask_blend import (
+    NODE_CLASS_MAPPINGS as MASK_BLEND_NODE_CLASS_MAPPINGS,
+    NODE_DISPLAY_NAME_MAPPINGS as MASK_BLEND_NODE_DISPLAY_NAME_MAPPINGS,
+)
+from .gift_chroma_master import (
+    NODE_CLASS_MAPPINGS as CHROMA_NODE_CLASS_MAPPINGS,
+    NODE_DISPLAY_NAME_MAPPINGS as CHROMA_NODE_DISPLAY_NAME_MAPPINGS,
+)
 
-NODE_CLASS_MAPPINGS = {}
-NODE_CLASS_MAPPINGS.update(OVERLAY_NODE_CLASS_MAPPINGS)
-NODE_CLASS_MAPPINGS.update(POSTFX_NODE_CLASS_MAPPINGS)
-NODE_CLASS_MAPPINGS.update(TIMEREMAP_NODE_CLASS_MAPPINGS)
-NODE_CLASS_MAPPINGS.update(AE_RGBA_NODE_CLASS_MAPPINGS)
 
-NODE_DISPLAY_NAME_MAPPINGS = {}
-NODE_DISPLAY_NAME_MAPPINGS.update(OVERLAY_NODE_DISPLAY_NAME_MAPPINGS)
-NODE_DISPLAY_NAME_MAPPINGS.update(POSTFX_NODE_DISPLAY_NAME_MAPPINGS)
-NODE_DISPLAY_NAME_MAPPINGS.update(TIMEREMAP_NODE_DISPLAY_NAME_MAPPINGS)
-NODE_DISPLAY_NAME_MAPPINGS.update(AE_RGBA_NODE_DISPLAY_NAME_MAPPINGS)
+def _merge_mappings(label, *groups):
+    merged = {}
+    for group in groups:
+        duplicates = set(merged).intersection(group)
+        if duplicates:
+            names = ", ".join(sorted(duplicates))
+            raise RuntimeError(f"duplicate {label} registration(s): {names}")
+        merged.update(group)
+    return merged
+
+
+NODE_CLASS_MAPPINGS = _merge_mappings(
+    "node",
+    OVERLAY_NODE_CLASS_MAPPINGS,
+    POSTFX_NODE_CLASS_MAPPINGS,
+    TIMEREMAP_NODE_CLASS_MAPPINGS,
+    AE_RGBA_NODE_CLASS_MAPPINGS,
+    MASK_BLEND_NODE_CLASS_MAPPINGS,
+    CHROMA_NODE_CLASS_MAPPINGS,
+)
+
+NODE_DISPLAY_NAME_MAPPINGS = _merge_mappings(
+    "display-name",
+    OVERLAY_NODE_DISPLAY_NAME_MAPPINGS,
+    POSTFX_NODE_DISPLAY_NAME_MAPPINGS,
+    TIMEREMAP_NODE_DISPLAY_NAME_MAPPINGS,
+    AE_RGBA_NODE_DISPLAY_NAME_MAPPINGS,
+    MASK_BLEND_NODE_DISPLAY_NAME_MAPPINGS,
+    CHROMA_NODE_DISPLAY_NAME_MAPPINGS,
+)
+
+if set(NODE_CLASS_MAPPINGS) != set(NODE_DISPLAY_NAME_MAPPINGS):
+    missing_names = set(NODE_CLASS_MAPPINGS).difference(NODE_DISPLAY_NAME_MAPPINGS)
+    unknown_names = set(NODE_DISPLAY_NAME_MAPPINGS).difference(NODE_CLASS_MAPPINGS)
+    raise RuntimeError(
+        "node/display mapping mismatch: "
+        f"missing={sorted(missing_names)}, unknown={sorted(unknown_names)}"
+    )
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
