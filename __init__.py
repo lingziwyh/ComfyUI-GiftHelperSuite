@@ -22,6 +22,7 @@ from .gift_chroma_master import (
     NODE_CLASS_MAPPINGS as CHROMA_NODE_CLASS_MAPPINGS,
     NODE_DISPLAY_NAME_MAPPINGS as CHROMA_NODE_DISPLAY_NAME_MAPPINGS,
 )
+from .example_assets import install_example_assets
 
 
 def _merge_mappings(label, *groups):
@@ -62,5 +63,14 @@ if set(NODE_CLASS_MAPPINGS) != set(NODE_DISPLAY_NAME_MAPPINGS):
         "node/display mapping mismatch: "
         f"missing={sorted(missing_names)}, unknown={sorted(unknown_names)}"
     )
+
+try:
+    _EXAMPLE_ASSET_STATUS = install_example_assets()
+except Exception:
+    # Example media is optional and must never prevent node registration.
+    import logging as _logging
+
+    _logging.getLogger(__name__).exception("GiftHelperSuite example asset installation failed")
+    _EXAMPLE_ASSET_STATUS = {}
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]

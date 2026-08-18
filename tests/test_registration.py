@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import pathlib
 import sys
 import unittest
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -20,7 +22,8 @@ def load_suite():
     )
     module = importlib.util.module_from_spec(spec)
     sys.modules[PACKAGE_NAME] = module
-    spec.loader.exec_module(module)
+    with mock.patch.dict(os.environ, {"GIFT_HELPER_SKIP_EXAMPLE_ASSETS": "1"}):
+        spec.loader.exec_module(module)
     return module
 
 

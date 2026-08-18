@@ -57,6 +57,23 @@ No extra pip dependencies are required. The suite uses the PyTorch bundled with 
 
 ---
 
+## Example Workflows / 示例工作流
+
+- [Gift PostFX Example](example_workflows/Gift_PostFX_Example.json)
+- [Gift Chroma Master Example](example_workflows/Gift_Chroma_Master_Example.json)
+
+Both workflows include their real demo videos and background image under `example_workflows/assets`. On the first ComfyUI startup after installation, GiftHelperSuite atomically copies the three content-hashed demo files into the root of `ComfyUI/input`, so the workflows can be dragged into ComfyUI without manually reconnecting local files. Existing files are never overwritten; a different same-name file is kept and reported as a conflict. Set `GIFT_HELPER_SKIP_EXAMPLE_ASSETS=1` before starting ComfyUI to opt out.
+
+The two video examples also require [ComfyUI-VideoHelperSuite](https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite) for video loading and encoding. No models are required.
+
+两个示例工作流已内置真实视频和直播背景图。安装或更新组件并重启 ComfyUI 后，组件会把三个带 `GiftHelperSuite_` 前缀和内容哈希的示例素材原子复制到 `ComfyUI/input` 根目录，因此可直接拖入工作流，无需重新选择本机文件。组件不会覆盖任何同名文件；如需禁用自动安装示例素材，可在启动前设置 `GIFT_HELPER_SKIP_EXAMPLE_ASSETS=1`。视频加载与导出需要安装 `ComfyUI-VideoHelperSuite`，不需要任何模型。
+
+Uninstalling the plugin does not delete copied input files. They can be removed manually if no longer needed: `GiftHelperSuite_PostFX_Source_bebfe94a.mp4`, `GiftHelperSuite_Chroma_Source_92532474.mp4`, and `GiftHelperSuite_Example_Background_213ee241.png`. If installation reports a conflict or the opt-out flag is enabled, copy these files from `example_workflows/assets` to `ComfyUI/input` manually before running the templates.
+
+卸载组件时不会自动删除已复制到 `ComfyUI/input` 的三份素材；不再需要时可按上面的文件名手动清理。如果日志提示同名冲突，或启用了跳过开关，请先从 `example_workflows/assets` 手动复制素材，再运行示例工作流。
+
+---
+
 ## Included Nodes / 节点说明
 
 ### 1. Fast Bottom Fit Overlay
@@ -472,6 +489,13 @@ AI 礼物动效和直播特效生产中，经常会遇到大量重复但又很�
 ---
 
 ## Update Log / 更新记录
+
+### v0.5
+
+- Added portable Gift PostFX and Gift Chroma Master video example workflows.
+- Bundled two demo videos and one livestream background image with verified hashes.
+- Added conflict-safe, idempotent example asset installation for drag-and-run workflows.
+- Migrated the Chroma example from legacy `ProChroma*V5` IDs to current `GiftChromaMaster*` IDs and removed local temp paths.
 
 ### v0.4
 
