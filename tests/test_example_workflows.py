@@ -17,6 +17,7 @@ WORKFLOW_FILES = {
     "postfx": EXAMPLE_DIR / "Gift_PostFX_Example.json",
     "chroma": EXAMPLE_DIR / "Gift_Chroma_Master_Example.json",
 }
+ICON_WORKFLOW_FILE = EXAMPLE_DIR / "Gift_Icon_Auto_Restore_Production.json"
 
 
 def load_asset_module():
@@ -37,6 +38,7 @@ class ExampleWorkflowTests(unittest.TestCase):
             for name, path in WORKFLOW_FILES.items()
         }
         cls.assets = load_asset_module()
+        cls.icon_workflow = json.loads(ICON_WORKFLOW_FILE.read_text(encoding="utf-8"))
 
     def test_workflows_are_portable_ui_workflows(self):
         for name, path in WORKFLOW_FILES.items():
@@ -90,6 +92,34 @@ class ExampleWorkflowTests(unittest.TestCase):
         self.assertIn("GiftChromaMasterPackRGBA", node_types)
         self.assertNotIn("ProChromaPreviewV5", node_types)
         self.assertNotIn("ProChromaPackRGBAV5", node_types)
+
+    def test_icon_production_workflow_is_sanitized_and_uses_builtin_preview(self):
+        workflow = self.icon_workflow
+        text = ICON_WORKFLOW_FILE.read_text(encoding="utf-8")
+        self.assertEqual(workflow["version"], 0.4)
+        self.assertNotIn("class_type", text)
+        self.assertNotIn("fullpath", text)
+        self.assertNotIn("comfyui_mcp", text)
+        self.assertNotRegex(text, re.compile(r"[A-Za-z]:\\\\"))
+        self.assertNotIn("Clipboard", text)
+
+        icon_nodes = [
+            node for node in workflow["nodes"] if node["type"] == "GiftIconAutoRestore"
+        ]
+        self.assertEqual(len(icon_nodes), 1)
+        icon = icon_nodes[0]
+        input_by_name = {item["name"]: item for item in icon["inputs"]}
+        self.assertIsNone(input_by_name["preview_background"]["link"])
+        self.assertEqual(icon["widgets_values"][1], 0.105)
+        self.assertEqual(icon["widgets_values"][10], 8)
+        self.assertEqual(icon["widgets_values"][14], 1680)
+        self.assertEqual(icon["widgets_values"][15], "auto")
+
+        load_images = [node for node in workflow["nodes"] if node["type"] == "LoadImage"]
+        self.assertEqual(len(load_images), 1)
+        self.assertEqual(
+            load_images[0]["widgets_values"][0], "GiftHelperSuite_Icon_Source.png"
+        )
 
     def test_bundled_assets_match_manifest(self):
         for filename, metadata in self.assets.EXAMPLE_ASSET_MANIFEST.items():

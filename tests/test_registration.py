@@ -45,6 +45,7 @@ class RegistrationTests(unittest.TestCase):
             "GiftMaskFadeInOut",
             "GiftFrameSlice",
             "GiftMaskBlend",
+            "GiftIconAutoRestore",
         }
         self.assertTrue(expected.issubset(self.suite.NODE_CLASS_MAPPINGS))
         self.assertEqual(

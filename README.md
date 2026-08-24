@@ -549,3 +549,24 @@ MIT License.
 Created by [lingziwyh](https://github.com/lingziwyh)
 
 Designed for ComfyUI-based AIGC gift animation and livestream effect production workflows.
+
+---
+
+## Gift Icon Auto Restore & Export
+
+`GiftIconAutoRestore` turns the Klein + Gift Chroma Master preparation chain into three
+production outputs: a background preview, a tight 1280 RGBA ICON, and a tight 168 RGBA
+ICON. It restores visible glow from the original black-background image, rejects
+lifted-black/compression noise, applies a narrow canvas-edge safety fade, and performs
+premultiplied-alpha resizing with transparent short-side padding.
+
+The built-in edge guard only affects the outer 2.5% of the short canvas side by default
+(about 32 px at 1280); the central 95% is exactly unchanged. A custom `edge_guard_mask`
+can override the generated guard when needed.
+
+See [README_GIFT_ICON_AUTO_RESTORE.md](README_GIFT_ICON_AUTO_RESTORE.md) for the complete
+input, output, effective-pixel, and tuning reference.
+
+A complete Klein -> Gift Chroma Master -> auto-restore production template is included
+as [Gift_Icon_Auto_Restore_Production.json](example_workflows/Gift_Icon_Auto_Restore_Production.json).
+Replace its placeholder `GiftHelperSuite_Icon_Source.png` with the source image in ComfyUI.
