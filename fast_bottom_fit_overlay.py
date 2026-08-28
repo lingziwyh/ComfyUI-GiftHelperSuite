@@ -12,11 +12,16 @@ class FastBottomFitOverlay:
     - Support IMAGE batches efficiently with torch ops
     - Optional MASK for alpha compositing
     - Optional built-in top feather fade to soften top-edge cutoffs
+    - Optional rounded-rectangle feather mask that follows the resized layer
+      aspect ratio, becomes an inscribed ellipse at maximum corner radius,
+      and is mutually exclusive with the top feather fade
     - Optional packed output:
         left  = final mask (RGB)
         right = masked foreground on black background
-      Packed output keeps the resized layer aspect ratio and does NOT pad to
-      the background height. Its size is [B, resized_h, background_w * 2, 3].
+      Fit Content keeps the resized layer aspect ratio and does NOT pad to the
+      background height. Its size is [B, resized_h, background_w * 2, 3].
+      Fixed Canvas (1440x1280) uses two 720px-wide panels, bottom-aligns the
+      packed content, and pads the top with black pixels.
 
     IMAGE format in ComfyUI is expected to be [B, H, W, C], float32/float16 in [0, 1]
     MASK format is expected to be [B, H, W] or [H, W]
@@ -61,6 +66,34 @@ class FastBottomFitOverlay:
             },
             "optional": {
                 "layer_mask": ("MASK",),
+                "packed_size_mode": (
+                    ["Fit Content (Dynamic Height)", "Fixed Canvas (1440x1280)"],
+                    {"default": "Fit Content (Dynamic Height)"},
+                ),
+                "enable_rounded_rect_fade": (
+                    "BOOLEAN",
+                    {"default": False},
+                ),
+                "rounded_rect_fade_ratio": (
+                    "FLOAT",
+                    {
+                        "default": 0.16,
+                        "min": 0.0,
+                        "max": 0.5,
+                        "step": 0.005,
+                        "tooltip": "Inward feather width; 0.16 is about 8% of the layer's full width and height.",
+                    },
+                ),
+                "rounded_corner_radius": (
+                    "FLOAT",
+                    {
+                        "default": 0.30,
+                        "min": 0.0,
+                        "max": 1.0,
+                        "step": 0.01,
+                        "tooltip": "0 is a rectangle; 1 becomes an ellipse fitted to all four layer edges.",
+                    },
+                ),
             },
         }
 
@@ -125,6 +158,74 @@ class FastBottomFitOverlay:
 
         return ramp.view(1, 1, height, 1).expand(batch, 1, height, width)
 
+    def _make_rounded_rect_fade_mask(
+        self,
+        batch: int,
+        height: int,
+        width: int,
+        device,
+        dtype,
+        fade_ratio: float,
+        corner_radius_ratio: float,
+    ) -> torch.Tensor:
+        """Return a rounded rectangle that continuously becomes an ellipse."""
+        fade_ratio = float(max(0.0, min(0.5, fade_ratio)))
+        corner_radius_ratio = float(max(0.0, min(1.0, corner_radius_ratio)))
+        radius_y = float(height) * 0.5
+        radius_x = float(width) * 0.5
+
+        y = (torch.arange(height, device=device, dtype=dtype) + 0.5 - radius_y) / radius_y
+        x = (torch.arange(width, device=device, dtype=dtype) + 0.5 - radius_x) / radius_x
+        abs_y = y[:, None].abs()
+        abs_x = x[None, :].abs()
+
+        # Signed distance in normalized layer coordinates. At radius 0 this is
+        # a rectangle; at radius 1 the straight sections vanish into an ellipse.
+        straight_extent = 1.0 - corner_radius_ratio
+        q_y = abs_y - straight_extent
+        q_x = abs_x - straight_extent
+        outside_distance = torch.sqrt(q_y.clamp_min(0.0).square() + q_x.clamp_min(0.0).square())
+        inside_distance = torch.minimum(torch.maximum(q_y, q_x), torch.zeros_like(q_y + q_x))
+        signed_distance = outside_distance + inside_distance - corner_radius_ratio
+
+        if fade_ratio <= 0.0:
+            rounded_rect = (signed_distance <= 0.0).to(dtype=dtype)
+        else:
+            rounded_rect = (-signed_distance / fade_ratio).clamp(0.0, 1.0)
+
+        return rounded_rect.view(1, 1, height, width).expand(batch, 1, height, width)
+
+    def _apply_fade_mask(
+        self,
+        alpha: torch.Tensor,
+        enable_top_fade: bool,
+        top_fade_ratio: float,
+        enable_rounded_rect_fade: bool,
+        rounded_rect_fade_ratio: float,
+        rounded_corner_radius: float,
+    ) -> torch.Tensor:
+        batch, _, height, width = alpha.shape
+        if enable_top_fade:
+            return alpha * self._make_top_fade_mask(
+                batch,
+                height,
+                width,
+                alpha.device,
+                alpha.dtype,
+                top_fade_ratio,
+            )
+        if enable_rounded_rect_fade:
+            return alpha * self._make_rounded_rect_fade_mask(
+                batch,
+                height,
+                width,
+                alpha.device,
+                alpha.dtype,
+                rounded_rect_fade_ratio,
+                rounded_corner_radius,
+            )
+        return alpha
+
     def composite(
         self,
         background_image,
@@ -135,9 +236,18 @@ class FastBottomFitOverlay:
         top_fade_ratio=0.08,
         enable_packed_output=True,
         layer_mask=None,
+        packed_size_mode="Fit Content (Dynamic Height)",
+        enable_rounded_rect_fade=False,
+        rounded_rect_fade_ratio=0.16,
+        rounded_corner_radius=0.30,
     ):
         bg = self._ensure_image(background_image)
         fg = self._ensure_image(layer_image)
+
+        if enable_top_fade and enable_rounded_rect_fade:
+            raise ValueError(
+                "Top fade and rounded-rectangle fade are mutually exclusive. Enable only one fade mode."
+            )
 
         bg, fg, batch = self._broadcast_batch(bg, fg)
 
@@ -161,17 +271,64 @@ class FastBottomFitOverlay:
         alpha = self._ensure_mask(layer_mask, batch, fg_h, fg_w, device, dtype)
         alpha = F.interpolate(alpha, size=(resized_h, packed_w), mode="bilinear", align_corners=False)
 
-        if enable_top_fade:
-            top_fade = self._make_top_fade_mask(batch, resized_h, packed_w, device, dtype, top_fade_ratio)
-            alpha = alpha * top_fade
+        alpha = self._apply_fade_mask(
+            alpha,
+            enable_top_fade,
+            top_fade_ratio,
+            enable_rounded_rect_fade,
+            rounded_rect_fade_ratio,
+            rounded_corner_radius,
+        )
 
         alpha = (alpha * float(opacity)).clamp(0.0, 1.0)
 
-        # Packed output keeps the resized layer aspect ratio and does not pad to background height.
+        # Packed output is either content-sized or bottom-aligned on a fixed canvas.
         if enable_packed_output:
-            packed_mask = alpha[:, 0:1, :, :].repeat(1, 3, 1, 1).permute(0, 2, 3, 1).contiguous()
-            packed_fg = (fg_resized * alpha).permute(0, 2, 3, 1).contiguous()
+            packed_fg_resized = fg_resized
+            packed_alpha = alpha
+
+            if packed_size_mode == "Fixed Canvas (1440x1280)" and packed_w != 720:
+                fixed_scale = 720.0 / float(fg_w)
+                fixed_h = max(1, int(round(fg_h * fixed_scale)))
+                packed_fg_resized = F.interpolate(
+                    fg_bchw,
+                    size=(fixed_h, 720),
+                    mode="bilinear",
+                    align_corners=False,
+                )
+                packed_alpha = self._ensure_mask(layer_mask, batch, fg_h, fg_w, device, dtype)
+                packed_alpha = F.interpolate(
+                    packed_alpha,
+                    size=(fixed_h, 720),
+                    mode="bilinear",
+                    align_corners=False,
+                )
+                packed_alpha = self._apply_fade_mask(
+                    packed_alpha,
+                    enable_top_fade,
+                    top_fade_ratio,
+                    enable_rounded_rect_fade,
+                    rounded_rect_fade_ratio,
+                    rounded_corner_radius,
+                )
+                packed_alpha = (packed_alpha * float(opacity)).clamp(0.0, 1.0)
+
+            packed_mask = (
+                packed_alpha[:, 0:1, :, :]
+                .repeat(1, 3, 1, 1)
+                .permute(0, 2, 3, 1)
+                .contiguous()
+            )
+            packed_fg = (packed_fg_resized * packed_alpha).permute(0, 2, 3, 1).contiguous()
             packed = torch.cat([packed_mask, packed_fg], dim=2).clamp(0.0, 1.0)
+
+            if packed_size_mode == "Fixed Canvas (1440x1280)":
+                if packed.shape[1] > 1280:
+                    packed = packed[:, packed.shape[1] - 1280 :, :, :]
+                elif packed.shape[1] < 1280:
+                    fixed_canvas = packed.new_zeros((batch, 1280, 1440, 3))
+                    fixed_canvas[:, 1280 - packed.shape[1] :, :, :] = packed
+                    packed = fixed_canvas
         else:
             packed = bg.clone()
 

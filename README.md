@@ -93,6 +93,10 @@ It automatically scales the foreground layer to match the background width, keep
 - Bottom alignment
 - Batch sequence support
 - Optional top feather fade
+- Optional rounded-rectangle feather mask that follows the layer aspect ratio
+- Adjustable corner radius from a rectangle to a fully inscribed ellipse
+- Top feather fade and rounded-rectangle feather mask are mutually exclusive
+- Packed size modes: dynamic content height or a fixed 1440x1280 canvas with black top padding
 - Useful for character / atmosphere / overlay compositing
 
 #### 核心功能
@@ -102,6 +106,10 @@ It automatically scales the foreground layer to match the background width, keep
 - 自动底部贴合
 - 支持序列帧批处理
 - 支持顶部柔和过渡遮罩
+- 支持跟随图层宽高比动态变化的圆角矩形柔化遮罩
+- 圆角半径可从直角矩形调节到四边贴边的内切椭圆
+- 顶部羽化与圆角矩形羽化互斥，只能启用其中一种
+- Packed 输出支持动态内容高度，或固定 1440x1280 画布并在顶部补黑
 - 适合人物层、氛围层、礼物动效层叠加
 
 #### Typical Use Cases
