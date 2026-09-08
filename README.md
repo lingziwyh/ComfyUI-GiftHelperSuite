@@ -97,6 +97,7 @@ It automatically scales the foreground layer to match the background width, keep
 - Adjustable corner radius from a rectangle to a fully inscribed ellipse
 - Top feather fade and rounded-rectangle feather mask are mutually exclusive
 - Packed size modes: dynamic content height or a fixed 1440x1280 canvas with black top padding
+- `center_scale` (0–1, default 1): shrink the fitted video around its center, with masks and premultiplied RGB scaled together. Canvas dimensions stay unchanged; 0 hides the foreground.
 - Useful for character / atmosphere / overlay compositing
 
 #### 核心功能
@@ -110,6 +111,7 @@ It automatically scales the foreground layer to match the background width, keep
 - 圆角半径可从直角矩形调节到四边贴边的内切椭圆
 - 顶部羽化与圆角矩形羽化互斥，只能启用其中一种
 - Packed 输出支持动态内容高度，或固定 1440x1280 画布并在顶部补黑
+- `center_scale`（中心缩放比例，0–1，默认 1）：以贴底后视频区域中心缩放，遮罩与前景同步；画布尺寸不变，0 时前景消失。缩小后上下均留空，不再重新贴底；超高视频先按原规则裁剪，再围绕可见区域中心缩放。
 - 适合人物层、氛围层、礼物动效层叠加
 
 #### Typical Use Cases

@@ -94,6 +94,16 @@ class FastBottomFitOverlay:
                         "tooltip": "0 is a rectangle; 1 becomes an ellipse fitted to all four layer edges.",
                     },
                 ),
+                "center_scale": (
+                    "FLOAT",
+                    {
+                        "default": 1.0,
+                        "min": 0.0,
+                        "max": 1.0,
+                        "step": 0.01,
+                        "tooltip": "中心缩放比例：以贴底后视频区域的中心缩放；1 为原大小，0 为完全消失。输出画布尺寸不变。",
+                    },
+                ),
             },
         }
 
@@ -226,6 +236,20 @@ class FastBottomFitOverlay:
             )
         return alpha
 
+    def _scale_about_center(self, tensor: torch.Tensor, scale: float) -> torch.Tensor:
+        """Scale BCHW content inside its existing canvas, leaving empty margins."""
+        if scale == 1.0:
+            return tensor
+        if scale == 0.0:
+            return torch.zeros_like(tensor)
+        height, width = tensor.shape[-2:]
+        scaled_h = max(1, int(round(height * scale)))
+        scaled_w = max(1, int(round(width * scale)))
+        resized = F.interpolate(tensor, size=(scaled_h, scaled_w), mode="bilinear", align_corners=False)
+        top = (height - scaled_h) // 2
+        left = (width - scaled_w) // 2
+        return F.pad(resized, (left, width - scaled_w - left, top, height - scaled_h - top))
+
     def composite(
         self,
         background_image,
@@ -240,7 +264,11 @@ class FastBottomFitOverlay:
         enable_rounded_rect_fade=False,
         rounded_rect_fade_ratio=0.16,
         rounded_corner_radius=0.30,
+        center_scale=1.0,
     ):
+        center_scale = float(center_scale)
+        if not 0.0 <= center_scale <= 1.0:
+            raise ValueError("center_scale must be between 0 and 1.")
         bg = self._ensure_image(background_image)
         fg = self._ensure_image(layer_image)
 
@@ -313,13 +341,22 @@ class FastBottomFitOverlay:
                 )
                 packed_alpha = (packed_alpha * float(opacity)).clamp(0.0, 1.0)
 
+            # Scale each panel around the fitted video center, before top padding.
+            # Premultiply before resampling to keep transparent-edge colors clean.
+            packed_rgb = packed_fg_resized * packed_alpha
+            if center_scale != 1.0:
+                if packed_size_mode == "Fixed Canvas (1440x1280)":
+                    packed_rgb = packed_rgb[:, :, -1280:, :]
+                    packed_alpha = packed_alpha[:, :, -1280:, :]
+                packed_rgb = self._scale_about_center(packed_rgb, center_scale)
+                packed_alpha = self._scale_about_center(packed_alpha, center_scale)
             packed_mask = (
                 packed_alpha[:, 0:1, :, :]
                 .repeat(1, 3, 1, 1)
                 .permute(0, 2, 3, 1)
                 .contiguous()
             )
-            packed_fg = (packed_fg_resized * packed_alpha).permute(0, 2, 3, 1).contiguous()
+            packed_fg = packed_rgb.permute(0, 2, 3, 1).contiguous()
             packed = torch.cat([packed_mask, packed_fg], dim=2).clamp(0.0, 1.0)
 
             if packed_size_mode == "Fixed Canvas (1440x1280)":
@@ -358,7 +395,13 @@ class FastBottomFitOverlay:
         fg_region = fg_preview.permute(0, 2, 3, 1).contiguous()
         a_region = alpha_preview.permute(0, 2, 3, 1).contiguous()
 
-        out[:, y0:y1, x0:x1, :] = fg_region * a_region + out_region * (1.0 - a_region)
+        if center_scale == 1.0:
+            out[:, y0:y1, x0:x1, :] = fg_region * a_region + out_region * (1.0 - a_region)
+        else:
+            scaled_rgb = self._scale_about_center(fg_preview * alpha_preview, center_scale)
+            alpha_preview = self._scale_about_center(alpha_preview, center_scale)
+            a_region = alpha_preview.permute(0, 2, 3, 1)
+            out[:, y0:y1, x0:x1, :] = scaled_rgb.permute(0, 2, 3, 1) + out_region * (1.0 - a_region)
 
         full_mask = torch.zeros((batch, bg_h, bg_w), device=device, dtype=dtype)
         full_mask[:, y0:y1, x0:x1] = alpha_preview[:, 0, :, :]
