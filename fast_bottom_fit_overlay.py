@@ -2,6 +2,15 @@ import torch
 import torch.nn.functional as F
 
 
+# Number of frames assembled per pass when building the packed output.
+# The packed canvas for a full video batch is large (a 121-frame 1440x1280
+# float32 canvas is ~2.5 GB), and the previous implementation additionally
+# materialised four more tensors of that magnitude at once. Writing the result
+# in slices keeps the transient allocations proportional to the chunk instead
+# of the batch, which is what makes long batches survive on CPU-only workers.
+PACKED_CHUNK_FRAMES = 16
+
+
 class FastBottomFitOverlay:
     """
     Fast ComfyUI node:
@@ -226,6 +235,59 @@ class FastBottomFitOverlay:
             )
         return alpha
 
+    def _assemble_packed(
+        self,
+        fg_resized: torch.Tensor,
+        alpha: torch.Tensor,
+        fixed_canvas: bool,
+    ) -> torch.Tensor:
+        """Build the packed [mask | masked foreground] output.
+
+        The result is written directly into its final tensor, one chunk of
+        frames at a time. The previous implementation built the same thing via
+        ``repeat`` -> ``permute().contiguous()`` -> ``cat`` -> ``clamp`` and then
+        copied it once more into a zero-filled canvas, so five batch-sized
+        tensors were alive simultaneously. For a 121-frame 1440x1280 batch that
+        is ~12.5 GB of transients on top of the 2.5 GB result; on a CPU-only
+        worker that is enough to get the process OOM-killed mid-node.
+
+        Output is identical to the previous code path, including the
+        bottom-alignment behaviour of the fixed canvas.
+        """
+        batch, _, content_h, panel_w = fg_resized.shape
+
+        if fixed_canvas:
+            out_h = 1280
+            copy_h = min(content_h, out_h)
+            # Taller content keeps its bottom rows; shorter content is padded
+            # at the top with the black the canvas is already filled with.
+            src_top = content_h - copy_h
+            dst_top = out_h - copy_h
+        else:
+            out_h = content_h
+            copy_h = content_h
+            src_top = 0
+            dst_top = 0
+
+        packed = fg_resized.new_zeros((batch, out_h, panel_w * 2, 3))
+
+        for start in range(0, batch, PACKED_CHUNK_FRAMES):
+            end = min(start + PACKED_CHUNK_FRAMES, batch)
+            a = alpha[start:end, :, src_top:src_top + copy_h, :]
+            f = fg_resized[start:end, :, src_top:src_top + copy_h, :]
+
+            # Left panel: the mask as RGB. ``expand`` is a view, so the three
+            # channels cost nothing until the assignment copies them across.
+            packed[start:end, dst_top:, :panel_w, :] = (
+                a[:, 0].unsqueeze(-1).expand(-1, -1, -1, 3).clamp(0.0, 1.0)
+            )
+            # Right panel: foreground premultiplied by the mask.
+            packed[start:end, dst_top:, panel_w:, :] = (
+                (f * a).permute(0, 2, 3, 1).clamp(0.0, 1.0)
+            )
+
+        return packed
+
     def composite(
         self,
         background_image,
@@ -313,22 +375,11 @@ class FastBottomFitOverlay:
                 )
                 packed_alpha = (packed_alpha * float(opacity)).clamp(0.0, 1.0)
 
-            packed_mask = (
-                packed_alpha[:, 0:1, :, :]
-                .repeat(1, 3, 1, 1)
-                .permute(0, 2, 3, 1)
-                .contiguous()
+            packed = self._assemble_packed(
+                packed_fg_resized,
+                packed_alpha,
+                fixed_canvas=packed_size_mode == "Fixed Canvas (1440x1280)",
             )
-            packed_fg = (packed_fg_resized * packed_alpha).permute(0, 2, 3, 1).contiguous()
-            packed = torch.cat([packed_mask, packed_fg], dim=2).clamp(0.0, 1.0)
-
-            if packed_size_mode == "Fixed Canvas (1440x1280)":
-                if packed.shape[1] > 1280:
-                    packed = packed[:, packed.shape[1] - 1280 :, :, :]
-                elif packed.shape[1] < 1280:
-                    fixed_canvas = packed.new_zeros((batch, 1280, 1440, 3))
-                    fixed_canvas[:, 1280 - packed.shape[1] :, :, :] = packed
-                    packed = fixed_canvas
         else:
             packed = bg.clone()
 
@@ -353,15 +404,20 @@ class FastBottomFitOverlay:
         x1 = bg_w
 
         out = bg.clone()
-        out_region = out[:, y0:y1, x0:x1, :]
-
-        fg_region = fg_preview.permute(0, 2, 3, 1).contiguous()
-        a_region = alpha_preview.permute(0, 2, 3, 1).contiguous()
-
-        out[:, y0:y1, x0:x1, :] = fg_region * a_region + out_region * (1.0 - a_region)
-
         full_mask = torch.zeros((batch, bg_h, bg_w), device=device, dtype=dtype)
-        full_mask[:, y0:y1, x0:x1] = alpha_preview[:, 0, :, :]
+
+        # Composite in the same slices as the packed output: a batch-sized
+        # ``permute().contiguous()`` of the foreground and of the alpha would
+        # otherwise add two more full-size copies on top of ``out``.
+        for start in range(0, batch, PACKED_CHUNK_FRAMES):
+            end = min(start + PACKED_CHUNK_FRAMES, batch)
+            fg_region = fg_preview[start:end].permute(0, 2, 3, 1)
+            a_region = alpha_preview[start:end].permute(0, 2, 3, 1)
+            out_region = out[start:end, y0:y1, x0:x1, :]
+            out[start:end, y0:y1, x0:x1, :] = (
+                fg_region * a_region + out_region * (1.0 - a_region)
+            )
+            full_mask[start:end, y0:y1, x0:x1] = alpha_preview[start:end, 0, :, :]
 
         return (out.clamp(0.0, 1.0), full_mask.clamp(0.0, 1.0), packed)
 

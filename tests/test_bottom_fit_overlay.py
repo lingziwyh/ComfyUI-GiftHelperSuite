@@ -10,6 +10,7 @@ import torch
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+import fast_bottom_fit_overlay  # noqa: E402
 from fast_bottom_fit_overlay import FastBottomFitOverlay  # noqa: E402
 
 
@@ -148,6 +149,79 @@ class FastBottomFitOverlayTests(unittest.TestCase):
 
         self.assertEqual(tuple(packed.shape), (1, 1280, 1440, 3))
         self.assertTrue(torch.equal(packed, torch.ones_like(packed)))
+
+
+
+class PackedChunkingTests(unittest.TestCase):
+    """The packed output is assembled in slices; make sure the slicing is
+    transparent — a chunk-indexing bug would silently duplicate or drop frames,
+    which is invisible in a single-frame test."""
+
+    def setUp(self):
+        self._chunk = fast_bottom_fit_overlay.PACKED_CHUNK_FRAMES
+        # Force several passes over a small batch so the boundaries are
+        # exercised without allocating a realistic video-sized canvas.
+        fast_bottom_fit_overlay.PACKED_CHUNK_FRAMES = 2
+
+    def tearDown(self):
+        fast_bottom_fit_overlay.PACKED_CHUNK_FRAMES = self._chunk
+
+    def test_frames_do_not_bleed_across_chunk_boundaries(self):
+        batch = 5
+        background = torch.zeros(batch, 8, 6, 3)
+        # Each frame carries a distinct constant so a mixed-up chunk shows up.
+        foreground = torch.stack([
+            torch.full((4, 6, 3), (i + 1) / 10.0) for i in range(batch)
+        ])
+        layer_mask = torch.ones(batch, 4, 6)
+
+        packed = FastBottomFitOverlay().composite(
+            background, foreground, layer_mask=layer_mask,
+        )[2]
+
+        self.assertEqual(tuple(packed.shape), (batch, 4, 12, 3))
+        for i in range(batch):
+            # Left panel is the mask, right panel is the premultiplied colour.
+            self.assertAlmostEqual(float(packed[i, 2, 2, 0]), 1.0, places=5)
+            self.assertAlmostEqual(float(packed[i, 2, 8, 0]), (i + 1) / 10.0, places=5)
+
+    def test_chunked_and_single_pass_results_match(self):
+        batch = 5
+        background = torch.zeros(batch, 8, 6, 3)
+        foreground = torch.rand(batch, 4, 6, 3)
+        layer_mask = torch.rand(batch, 4, 6)
+
+        chunked = FastBottomFitOverlay().composite(
+            background, foreground, layer_mask=layer_mask,
+        )[2]
+
+        fast_bottom_fit_overlay.PACKED_CHUNK_FRAMES = batch * 4
+        single = FastBottomFitOverlay().composite(
+            background, foreground, layer_mask=layer_mask,
+        )[2]
+
+        self.assertTrue(torch.allclose(chunked, single, atol=1e-6))
+
+    def test_fixed_canvas_bottom_aligns_and_crops_from_the_top(self):
+        # Shorter than the canvas: padded at the top, content sits at the bottom.
+        short = FastBottomFitOverlay().composite(
+            torch.zeros(1, 8, 6, 3),
+            torch.ones(1, 2, 3, 3),
+            packed_size_mode="Fixed Canvas (1440x1280)",
+        )[2]
+        self.assertEqual(tuple(short.shape), (1, 1280, 1440, 3))
+        self.assertEqual(float(short[0, 0, 0, 0]), 0.0)
+        self.assertEqual(float(short[0, 1279, 360, 0]), 1.0)
+
+        # Taller than the canvas: the bottom 1280 rows survive.
+        tall = FastBottomFitOverlay().composite(
+            torch.zeros(1, 8, 6, 3),
+            torch.ones(1, 4000, 720, 3),
+            packed_size_mode="Fixed Canvas (1440x1280)",
+        )[2]
+        self.assertEqual(tuple(tall.shape), (1, 1280, 1440, 3))
+        self.assertEqual(float(tall[0, 0, 360, 0]), 1.0)
+        self.assertEqual(float(tall[0, 1279, 360, 0]), 1.0)
 
 
 if __name__ == "__main__":
