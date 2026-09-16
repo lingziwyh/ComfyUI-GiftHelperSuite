@@ -13,18 +13,11 @@ Category:
 image/alpha
 ```
 
-## Install / Merge
+## Install / Update
 
-Copy these files into your existing `ComfyUI/custom_nodes/ComfyUI-GiftHelperSuite/` folder:
+Both nodes are included in GiftHelperSuite. Follow the [main installation guide](README.md) to install or update the complete package, then restart ComfyUI. Do not replace `__init__.py` with an older standalone copy: it also registers the other suite nodes.
 
-```text
-ae_rgba_tools.py
-__init__.py
-```
-
-Then restart ComfyUI.
-
-If you previously installed the standalone `ComfyUI_Unmult_AE` package, remove or disable that old folder to avoid duplicate node names.
+If you previously installed the standalone `ComfyUI_Unmult_AE` package, back up your workflows and verify the migration before disabling that old folder to avoid duplicate node names.
 
 ---
 
