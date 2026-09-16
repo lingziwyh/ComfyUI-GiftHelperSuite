@@ -77,7 +77,170 @@ class FastBottomFitOverlayTests(unittest.TestCase):
         self.assertIn("enable_rounded_rect_fade", optional)
         self.assertIn("rounded_rect_fade_ratio", optional)
         self.assertIn("rounded_corner_radius", optional)
+        self.assertIn("foreground_image", optional)
+        self.assertIn("foreground_mask", optional)
+        self.assertEqual(optional["preset"][0], ["Custom", "Low Coins", "Standard", "Naked-Eye 3D"])
+        self.assertEqual(optional["background_fade_ratio"][1]["default"], 0.0)
         self.assertEqual(optional["center_scale"][1]["default"], 1.0)
+
+    def test_production_presets_match_the_requested_fade_values(self):
+        self.assertEqual(
+            FastBottomFitOverlay.PRESET_VALUES,
+            {
+                "Low Coins": {
+                    "enable_top_fade": False,
+                    "top_fade_ratio": 0.08,
+                    "background_fade_ratio": 0.0,
+                    "enable_rounded_rect_fade": True,
+                    "rounded_rect_fade_ratio": 0.5,
+                    "rounded_corner_radius": 0.5,
+                },
+                "Standard": {
+                    "enable_top_fade": True,
+                    "top_fade_ratio": 0.08,
+                    "background_fade_ratio": 0.0,
+                    "enable_rounded_rect_fade": False,
+                    "rounded_rect_fade_ratio": 0.16,
+                    "rounded_corner_radius": 0.30,
+                },
+                "Naked-Eye 3D": {
+                    "enable_top_fade": True,
+                    "top_fade_ratio": 0.03,
+                    "background_fade_ratio": 0.52,
+                    "enable_rounded_rect_fade": False,
+                    "rounded_rect_fade_ratio": 0.16,
+                    "rounded_corner_radius": 0.30,
+                },
+            },
+        )
+
+    def test_background_fade_affects_layer_but_not_restored_foreground(self):
+        background = torch.zeros(1, 4, 4, 3)
+        layer = torch.zeros(1, 4, 4, 3)
+        layer[..., 0] = 1.0
+        foreground = torch.zeros(1, 4, 4, 3)
+        foreground[..., 1] = 1.0
+        foreground_mask = torch.ones(1, 4, 4)
+
+        image, mask, packed = FastBottomFitOverlay().composite(
+            background,
+            layer,
+            background_fade_ratio=0.5,
+            foreground_image=foreground,
+            foreground_mask=foreground_mask,
+        )
+
+        self.assertTrue(torch.equal(image, foreground))
+        self.assertTrue(torch.equal(mask, torch.ones_like(mask)))
+        self.assertTrue(torch.equal(packed[:, :, :4], torch.ones_like(packed[:, :, :4])))
+        self.assertTrue(torch.equal(packed[:, :, 4:, 1], torch.ones_like(packed[:, :, 4:, 1])))
+
+    def test_naked_eye_3d_preset_applies_large_background_and_short_global_fades(self):
+        background = torch.zeros(1, 100, 4, 3)
+        layer = torch.ones(1, 100, 4, 3)
+
+        _, mask, _ = FastBottomFitOverlay().composite(
+            background,
+            layer,
+            preset="Naked-Eye 3D",
+        )
+
+        self.assertEqual(float(mask[0, 0, 0]), 0.0)
+        self.assertGreater(float(mask[0, 2, 0]), 0.0)
+        self.assertLess(float(mask[0, 50, 0]), 1.0)
+        self.assertEqual(float(mask[0, 52, 0]), 1.0)
+
+    def test_top_fade_applies_to_restored_foreground_and_layer(self):
+        background = torch.zeros(1, 4, 4, 3)
+        layer = torch.zeros(1, 4, 4, 3)
+        layer[..., 0] = 1.0
+        foreground = torch.zeros(1, 4, 4, 3)
+        foreground[..., 1] = 1.0
+        foreground_mask = torch.zeros(1, 4, 4)
+        foreground_mask[:, 0:2, 1:3] = 1.0
+
+        image, mask, packed = FastBottomFitOverlay().composite(
+            background,
+            layer,
+            enable_top_fade=True,
+            top_fade_ratio=0.5,
+            foreground_image=foreground,
+            foreground_mask=foreground_mask,
+        )
+
+        self.assertTrue(torch.equal(image[0, 0], torch.zeros_like(image[0, 0])))
+        self.assertTrue(torch.equal(mask[0, 0], torch.zeros_like(mask[0, 0])))
+        self.assertTrue(torch.equal(image[0, 1, 1:3], torch.tensor([[0.0, 1.0, 0.0]]).expand(2, -1)))
+        self.assertTrue(torch.equal(mask[0, 1, 1:3], torch.ones(2)))
+        self.assertTrue(torch.equal(packed[:, :, :4, 0], mask))
+        self.assertTrue(torch.equal(packed[0, 0, 4:8], torch.zeros_like(packed[0, 0, 4:8])))
+        self.assertTrue(torch.equal(packed[0, 1, 5:7], torch.tensor([[0.0, 1.0, 0.0]]).expand(2, -1)))
+
+    def test_top_fade_applies_to_restored_foreground_in_fixed_canvas_packed_output(self):
+        background = torch.zeros(1, 8, 6, 3)
+        layer = torch.zeros(1, 2, 3, 3)
+        layer_mask = torch.zeros(1, 2, 3)
+        foreground = torch.zeros(1, 2, 3, 3)
+        foreground[..., 1] = 1.0
+        foreground_mask = torch.ones(1, 2, 3)
+
+        packed = FastBottomFitOverlay().composite(
+            background,
+            layer,
+            layer_mask=layer_mask,
+            enable_top_fade=True,
+            top_fade_ratio=0.5,
+            foreground_image=foreground,
+            foreground_mask=foreground_mask,
+            packed_size_mode="Fixed Canvas (1440x1280)",
+        )[2]
+
+        self.assertEqual(tuple(packed.shape), (1, 1280, 1440, 3))
+        self.assertEqual(float(packed[0, 800, 360, 0]), 0.0)
+        self.assertEqual(float(packed[0, 800, 1080, 1]), 0.0)
+        self.assertEqual(float(packed[0, 1040, 360, 0]), 1.0)
+        self.assertEqual(float(packed[0, 1040, 1080, 1]), 1.0)
+
+    def test_optional_foreground_uses_source_over_alpha_and_broadcasts_batch(self):
+        background = torch.zeros(1, 2, 2, 3)
+        layer = torch.zeros(1, 2, 2, 3)
+        layer[..., 0] = 1.0
+        layer_mask = torch.full((1, 2, 2), 0.5)
+        foreground = torch.zeros(2, 2, 2, 3)
+        foreground[..., 2] = 1.0
+        foreground_mask = torch.full((2, 2, 2), 0.5)
+
+        image, mask, _ = FastBottomFitOverlay().composite(
+            background,
+            layer,
+            layer_mask=layer_mask,
+            foreground_image=foreground,
+            foreground_mask=foreground_mask,
+        )
+
+        self.assertEqual(tuple(image.shape), (2, 2, 2, 3))
+        self.assertTrue(torch.allclose(mask, torch.full_like(mask, 0.75)))
+        expected = torch.tensor([0.25, 0.0, 0.5])
+        self.assertTrue(torch.allclose(image, expected.view(1, 1, 1, 3).expand_as(image)))
+
+    def test_omitting_optional_foreground_keeps_legacy_result_bit_exact(self):
+        torch.manual_seed(7)
+        background = torch.rand(2, 8, 6, 3)
+        layer = torch.rand(1, 4, 3, 3)
+        layer_mask = torch.rand(1, 4, 3)
+        node = FastBottomFitOverlay()
+
+        legacy = node.composite(background, layer, layer_mask=layer_mask)
+        explicit_none = node.composite(
+            background,
+            layer,
+            layer_mask=layer_mask,
+            foreground_image=None,
+            foreground_mask=None,
+        )
+
+        for old, new in zip(legacy, explicit_none):
+            self.assertTrue(torch.equal(old, new))
 
     def test_rounded_rect_follows_layer_aspect_ratio(self):
         background = torch.zeros(1, 80, 40, 3)

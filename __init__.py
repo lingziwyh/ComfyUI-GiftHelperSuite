@@ -27,6 +27,10 @@ from .gift_icon_auto_restore import (
     NODE_DISPLAY_NAME_MAPPINGS as ICON_NODE_DISPLAY_NAME_MAPPINGS,
 )
 from .example_assets import install_example_assets
+from .gift_video_matting import (
+    NODE_CLASS_MAPPINGS as VIDEO_MATTING_NODE_CLASS_MAPPINGS,
+    NODE_DISPLAY_NAME_MAPPINGS as VIDEO_MATTING_NODE_DISPLAY_NAME_MAPPINGS,
+)
 
 
 def _merge_mappings(label, *groups):
@@ -42,6 +46,7 @@ def _merge_mappings(label, *groups):
 
 NODE_CLASS_MAPPINGS = _merge_mappings(
     "node",
+    VIDEO_MATTING_NODE_CLASS_MAPPINGS,
     OVERLAY_NODE_CLASS_MAPPINGS,
     POSTFX_NODE_CLASS_MAPPINGS,
     TIMEREMAP_NODE_CLASS_MAPPINGS,
@@ -53,6 +58,7 @@ NODE_CLASS_MAPPINGS = _merge_mappings(
 
 NODE_DISPLAY_NAME_MAPPINGS = _merge_mappings(
     "display-name",
+    VIDEO_MATTING_NODE_DISPLAY_NAME_MAPPINGS,
     OVERLAY_NODE_DISPLAY_NAME_MAPPINGS,
     POSTFX_NODE_DISPLAY_NAME_MAPPINGS,
     TIMEREMAP_NODE_DISPLAY_NAME_MAPPINGS,

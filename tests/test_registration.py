@@ -34,6 +34,9 @@ class RegistrationTests(unittest.TestCase):
 
     def test_new_nodes_are_registered_with_complete_display_names(self):
         expected = {
+            "GiftAutoShotSplit",
+            "GiftMaskCheckFrames",
+            "GiftAdaptiveMatting",
             "GiftChromaMaster",
             "GiftChromaMasterKeyer",
             "GiftChromaMasterCleaner",

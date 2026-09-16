@@ -19,6 +19,10 @@ A lightweight ComfyUI utility node suite for **AIGC gift effects, livestream ani
 
 ## Features / 功能概览
 
+新增 **自动切镜、遮罩检查帧、自适应视频抠像**，支持首次执行时下载缺失的 TransNetV2 / MatAnyone2 权重。
+安装依赖、模型位置、授权及可拖入的示例见 [自动视频抠像指南](README_VIDEO_MATTING.md)。
+合成节点同时支持可选前景贴回、全图层 Top Fade、背景专用渐变及 Low Coins / Standard / Naked-Eye 3D 预设。
+
 | Node | Description | 用途 |
 |---|---|---|
 | **Fast Bottom Fit Overlay** | Auto scale foreground to background width and bottom-align it | 前景层自动缩放到底图宽度，并贴底合成 |
@@ -51,9 +55,9 @@ git clone https://github.com/lingziwyh/ComfyUI-GiftHelperSuite.git
 
 然后重启 ComfyUI。
 
-No extra pip dependencies are required. The suite uses the PyTorch bundled with ComfyUI.
+The original compositing tools need no extra pip dependencies. Video matting uses optional external node packs; see [setup](README_VIDEO_MATTING.md).
 
-无需额外安装 pip 依赖，节点直接使用 ComfyUI 自带的 PyTorch。
+原有合成工具无需额外 pip 依赖；视频抠像所需外部节点包与模型下载说明见[安装指南](README_VIDEO_MATTING.md)。
 
 ---
 

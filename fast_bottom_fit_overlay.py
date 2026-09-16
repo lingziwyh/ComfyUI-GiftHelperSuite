@@ -11,7 +11,9 @@ class FastBottomFitOverlay:
     - Center horizontally
     - Support IMAGE batches efficiently with torch ops
     - Optional MASK for alpha compositing
-    - Optional built-in top feather fade to soften top-edge cutoffs
+    - Optional restored foreground IMAGE + MASK composited above the faded layer
+    - Optional built-in top feather fade applied to the complete restored stack
+      to soften top-edge cutoffs
     - Optional rounded-rectangle feather mask that follows the resized layer
       aspect ratio, becomes an inscribed ellipse at maximum corner radius,
       and is mutually exclusive with the top feather fade
@@ -26,6 +28,34 @@ class FastBottomFitOverlay:
     IMAGE format in ComfyUI is expected to be [B, H, W, C], float32/float16 in [0, 1]
     MASK format is expected to be [B, H, W] or [H, W]
     """
+
+    PRESET_OPTIONS = ("Custom", "Low Coins", "Standard", "Naked-Eye 3D")
+    PRESET_VALUES = {
+        "Low Coins": {
+            "enable_top_fade": False,
+            "top_fade_ratio": 0.08,
+            "background_fade_ratio": 0.0,
+            "enable_rounded_rect_fade": True,
+            "rounded_rect_fade_ratio": 0.5,
+            "rounded_corner_radius": 0.5,
+        },
+        "Standard": {
+            "enable_top_fade": True,
+            "top_fade_ratio": 0.08,
+            "background_fade_ratio": 0.0,
+            "enable_rounded_rect_fade": False,
+            "rounded_rect_fade_ratio": 0.16,
+            "rounded_corner_radius": 0.30,
+        },
+        "Naked-Eye 3D": {
+            "enable_top_fade": True,
+            "top_fade_ratio": 0.03,
+            "background_fade_ratio": 0.52,
+            "enable_rounded_rect_fade": False,
+            "rounded_rect_fade_ratio": 0.16,
+            "rounded_corner_radius": 0.30,
+        },
+    }
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -65,7 +95,26 @@ class FastBottomFitOverlay:
                 ),
             },
             "optional": {
+                "preset": (
+                    list(cls.PRESET_OPTIONS),
+                    {
+                        "default": "Custom",
+                        "tooltip": "Production presets override only the fade controls; Custom uses the manual values below.",
+                    },
+                ),
                 "layer_mask": ("MASK",),
+                "foreground_image": ("IMAGE",),
+                "foreground_mask": ("MASK",),
+                "background_fade_ratio": (
+                    "FLOAT",
+                    {
+                        "default": 0.0,
+                        "min": 0.0,
+                        "max": 1.0,
+                        "step": 0.01,
+                        "tooltip": "Large top-to-bottom fade applied only to layer_image; 0 disables it.",
+                    },
+                ),
                 "packed_size_mode": (
                     ["Fit Content (Dynamic Height)", "Fixed Canvas (1440x1280)"],
                     {"default": "Fit Content (Dynamic Height)"},
@@ -155,8 +204,40 @@ class FastBottomFitOverlay:
             f"One input must have batch 1, or both must match."
         )
 
+    def _broadcast_foreground(self, bg: torch.Tensor, layer: torch.Tensor, foreground: torch.Tensor):
+        target_batch = max(bg.shape[0], layer.shape[0], foreground.shape[0])
+        images = []
+        for name, image in (("background", bg), ("layer", layer), ("foreground", foreground)):
+            if image.shape[0] == target_batch:
+                images.append(image)
+            elif image.shape[0] == 1:
+                images.append(image.expand(target_batch, -1, -1, -1))
+            else:
+                raise ValueError(
+                    f"Incompatible batch sizes: background={bg.shape[0]}, layer={layer.shape[0]}, "
+                    f"foreground={foreground.shape[0]}. Each input must have batch 1 or {target_batch}."
+                )
+        return images[0], images[1], images[2], target_batch
+
+    def _combine_premultiplied_layers(
+        self,
+        layer_rgb: torch.Tensor,
+        layer_alpha: torch.Tensor,
+        foreground_rgb: torch.Tensor = None,
+        foreground_alpha: torch.Tensor = None,
+    ):
+        """Return premultiplied RGB and alpha, restoring foreground above layer."""
+        layer_premultiplied = layer_rgb * layer_alpha
+        if foreground_rgb is None or foreground_alpha is None:
+            return layer_premultiplied, layer_alpha
+
+        inverse_foreground = 1.0 - foreground_alpha
+        combined_rgb = foreground_rgb * foreground_alpha + layer_premultiplied * inverse_foreground
+        combined_alpha = foreground_alpha + layer_alpha * inverse_foreground
+        return combined_rgb, combined_alpha.clamp(0.0, 1.0)
+
     def _make_top_fade_mask(self, batch: int, height: int, width: int, device, dtype, fade_ratio: float) -> torch.Tensor:
-        fade_ratio = float(max(0.0, min(0.5, fade_ratio)))
+        fade_ratio = float(max(0.0, min(1.0, fade_ratio)))
         if fade_ratio <= 0.0 or height <= 1:
             return torch.ones((batch, 1, height, width), device=device, dtype=dtype)
 
@@ -265,19 +346,38 @@ class FastBottomFitOverlay:
         rounded_rect_fade_ratio=0.16,
         rounded_corner_radius=0.30,
         center_scale=1.0,
+        foreground_image=None,
+        foreground_mask=None,
+        preset="Custom",
+        background_fade_ratio=0.0,
     ):
+        if preset not in self.PRESET_OPTIONS:
+            raise ValueError(f"Unknown preset: {preset!r}. Expected one of {self.PRESET_OPTIONS}.")
+        if preset != "Custom":
+            preset_values = self.PRESET_VALUES[preset]
+            enable_top_fade = preset_values["enable_top_fade"]
+            top_fade_ratio = preset_values["top_fade_ratio"]
+            background_fade_ratio = preset_values["background_fade_ratio"]
+            enable_rounded_rect_fade = preset_values["enable_rounded_rect_fade"]
+            rounded_rect_fade_ratio = preset_values["rounded_rect_fade_ratio"]
+            rounded_corner_radius = preset_values["rounded_corner_radius"]
+
         center_scale = float(center_scale)
         if not 0.0 <= center_scale <= 1.0:
             raise ValueError("center_scale must be between 0 and 1.")
         bg = self._ensure_image(background_image)
         fg = self._ensure_image(layer_image)
+        restored_fg = self._ensure_image(foreground_image) if foreground_image is not None else None
 
         if enable_top_fade and enable_rounded_rect_fade:
             raise ValueError(
                 "Top fade and rounded-rectangle fade are mutually exclusive. Enable only one fade mode."
             )
 
-        bg, fg, batch = self._broadcast_batch(bg, fg)
+        if restored_fg is None:
+            bg, fg, batch = self._broadcast_batch(bg, fg)
+        else:
+            bg, fg, restored_fg, batch = self._broadcast_foreground(bg, fg, restored_fg)
 
         device = bg.device
         dtype = bg.dtype
@@ -296,8 +396,44 @@ class FastBottomFitOverlay:
         fg_bchw = fg.permute(0, 3, 1, 2).contiguous()
         fg_resized = F.interpolate(fg_bchw, size=(resized_h, packed_w), mode="bilinear", align_corners=False)
 
+        restored_fg_bchw = None
+        restored_alpha = None
+        if restored_fg is not None:
+            restored_h, restored_w = restored_fg.shape[1], restored_fg.shape[2]
+            restored_fg_bchw = restored_fg.permute(0, 3, 1, 2).contiguous()
+            restored_fg_bchw = F.interpolate(
+                restored_fg_bchw,
+                size=(resized_h, packed_w),
+                mode="bilinear",
+                align_corners=False,
+            )
+            restored_alpha = self._ensure_mask(
+                foreground_mask,
+                batch,
+                restored_h,
+                restored_w,
+                device,
+                dtype,
+            )
+            restored_alpha = F.interpolate(
+                restored_alpha,
+                size=(resized_h, packed_w),
+                mode="bilinear",
+                align_corners=False,
+            )
+
         alpha = self._ensure_mask(layer_mask, batch, fg_h, fg_w, device, dtype)
         alpha = F.interpolate(alpha, size=(resized_h, packed_w), mode="bilinear", align_corners=False)
+
+        if background_fade_ratio > 0.0:
+            alpha = alpha * self._make_top_fade_mask(
+                batch,
+                resized_h,
+                packed_w,
+                device,
+                dtype,
+                background_fade_ratio,
+            )
 
         alpha = self._apply_fade_mask(
             alpha,
@@ -309,11 +445,24 @@ class FastBottomFitOverlay:
         )
 
         alpha = (alpha * float(opacity)).clamp(0.0, 1.0)
+        if restored_alpha is not None:
+            if enable_top_fade:
+                restored_alpha = restored_alpha * self._make_top_fade_mask(
+                    batch,
+                    resized_h,
+                    packed_w,
+                    device,
+                    dtype,
+                    top_fade_ratio,
+                )
+            restored_alpha = (restored_alpha * float(opacity)).clamp(0.0, 1.0)
 
         # Packed output is either content-sized or bottom-aligned on a fixed canvas.
         if enable_packed_output:
             packed_fg_resized = fg_resized
             packed_alpha = alpha
+            packed_restored_fg = restored_fg_bchw
+            packed_restored_alpha = restored_alpha
 
             if packed_size_mode == "Fixed Canvas (1440x1280)" and packed_w != 720:
                 fixed_scale = 720.0 / float(fg_w)
@@ -331,6 +480,15 @@ class FastBottomFitOverlay:
                     mode="bilinear",
                     align_corners=False,
                 )
+                if background_fade_ratio > 0.0:
+                    packed_alpha = packed_alpha * self._make_top_fade_mask(
+                        batch,
+                        fixed_h,
+                        720,
+                        device,
+                        dtype,
+                        background_fade_ratio,
+                    )
                 packed_alpha = self._apply_fade_mask(
                     packed_alpha,
                     enable_top_fade,
@@ -341,9 +499,48 @@ class FastBottomFitOverlay:
                 )
                 packed_alpha = (packed_alpha * float(opacity)).clamp(0.0, 1.0)
 
+                if restored_fg is not None:
+                    packed_restored_fg = F.interpolate(
+                        restored_fg.permute(0, 3, 1, 2).contiguous(),
+                        size=(fixed_h, 720),
+                        mode="bilinear",
+                        align_corners=False,
+                    )
+                    packed_restored_alpha = self._ensure_mask(
+                        foreground_mask,
+                        batch,
+                        restored_fg.shape[1],
+                        restored_fg.shape[2],
+                        device,
+                        dtype,
+                    )
+                    packed_restored_alpha = F.interpolate(
+                        packed_restored_alpha,
+                        size=(fixed_h, 720),
+                        mode="bilinear",
+                        align_corners=False,
+                    )
+                    if enable_top_fade:
+                        packed_restored_alpha = packed_restored_alpha * self._make_top_fade_mask(
+                            batch,
+                            fixed_h,
+                            720,
+                            device,
+                            dtype,
+                            top_fade_ratio,
+                        )
+                    packed_restored_alpha = (
+                        packed_restored_alpha * float(opacity)
+                    ).clamp(0.0, 1.0)
+
             # Scale each panel around the fitted video center, before top padding.
             # Premultiply before resampling to keep transparent-edge colors clean.
-            packed_rgb = packed_fg_resized * packed_alpha
+            packed_rgb, packed_alpha = self._combine_premultiplied_layers(
+                packed_fg_resized,
+                packed_alpha,
+                packed_restored_fg,
+                packed_restored_alpha,
+            )
             if center_scale != 1.0:
                 if packed_size_mode == "Fixed Canvas (1440x1280)":
                     packed_rgb = packed_rgb[:, :, -1280:, :]
@@ -373,6 +570,8 @@ class FastBottomFitOverlay:
         preview_h = resized_h
         fg_preview = fg_resized
         alpha_preview = alpha
+        restored_fg_preview = restored_fg_bchw
+        restored_alpha_preview = restored_alpha
 
         if preview_h > bg_h:
             if not clip_if_too_tall:
@@ -382,6 +581,9 @@ class FastBottomFitOverlay:
                 )
             fg_preview = fg_preview[:, :, preview_h - bg_h :, :]
             alpha_preview = alpha_preview[:, :, preview_h - bg_h :, :]
+            if restored_fg_preview is not None:
+                restored_fg_preview = restored_fg_preview[:, :, preview_h - bg_h :, :]
+                restored_alpha_preview = restored_alpha_preview[:, :, preview_h - bg_h :, :]
             preview_h = bg_h
 
         y0 = bg_h - preview_h
@@ -392,13 +594,21 @@ class FastBottomFitOverlay:
         out = bg.clone()
         out_region = out[:, y0:y1, x0:x1, :]
 
-        fg_region = fg_preview.permute(0, 2, 3, 1).contiguous()
+        combined_rgb, alpha_preview = self._combine_premultiplied_layers(
+            fg_preview,
+            alpha_preview,
+            restored_fg_preview,
+            restored_alpha_preview,
+        )
         a_region = alpha_preview.permute(0, 2, 3, 1).contiguous()
 
         if center_scale == 1.0:
-            out[:, y0:y1, x0:x1, :] = fg_region * a_region + out_region * (1.0 - a_region)
+            out[:, y0:y1, x0:x1, :] = (
+                combined_rgb.permute(0, 2, 3, 1).contiguous()
+                + out_region * (1.0 - a_region)
+            )
         else:
-            scaled_rgb = self._scale_about_center(fg_preview * alpha_preview, center_scale)
+            scaled_rgb = self._scale_about_center(combined_rgb, center_scale)
             alpha_preview = self._scale_about_center(alpha_preview, center_scale)
             a_region = alpha_preview.permute(0, 2, 3, 1)
             out[:, y0:y1, x0:x1, :] = scaled_rgb.permute(0, 2, 3, 1) + out_region * (1.0 - a_region)
