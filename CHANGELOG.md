@@ -2,6 +2,26 @@
 
 版本号采用 `MAJOR.MINOR.PATCH`。以下 v0.1–v0.5 保留原 README 的历史记录；不为过去的提交补造发布日期。
 
+## v0.6.1 — 2026-09-17
+
+聚焦 `FastBottomFitOverlay` 的生产操作体验与合成能力。
+
+### Added
+
+- 内置首尾对称 `fade_frames`，同时作用于礼物底层和贴回前景，不影响直播间背景。
+- 新增前端交互：非 Custom 预设直接回显实际值并锁定被覆盖参数；与当前空间羽化模式无关的参数自动禁用。
+
+### Changed
+
+- 将 Top Fade / Rounded Rect 两个开关收敛为单一 `fade_mode`：`None`、`Top Fade`、`Rounded Rect`，从结构上保证互斥。
+- 节点参数重排为“全局合成参数在上，预设及受控参数在下”，`clip_if_too_tall` 收入高级参数。
+- `Low Coins`：Rounded Rect ratio `0.255`，corner radius `0.90`，center scale `0.85`。
+- `Naked-Eye 3D`：Top Fade ratio 调整为 `0.045`，背景大渐变保持 `0.52`。
+
+### Compatibility
+
+- 节点 ID 保持不变；由于内部生产节点统一升级，本版不兼容旧的双开关空间羽化参数，旧工作流需重新选择 `fade_mode`。
+
 ## v0.6.0 — 2026-09-16
 
 整合 v0.5 之后已落地的功能，并统一 README、代码版本号和 Git 标签。

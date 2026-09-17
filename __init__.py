@@ -1,4 +1,5 @@
-__version__ = "0.6.0"
+__version__ = "0.6.1"
+WEB_DIRECTORY = "./web"
 
 from .fast_bottom_fit_overlay import (
     NODE_CLASS_MAPPINGS as OVERLAY_NODE_CLASS_MAPPINGS,
@@ -87,4 +88,4 @@ except Exception:
     _logging.getLogger(__name__).exception("GiftHelperSuite example asset installation failed")
     _EXAMPLE_ASSET_STATUS = {}
 
-__all__ = ["__version__", "NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
+__all__ = ["__version__", "WEB_DIRECTORY", "NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]

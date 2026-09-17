@@ -61,7 +61,7 @@ class FastBottomFitOverlayTests(unittest.TestCase):
                 fg = torch.ones_like(bg)
                 image, mask, packed = FastBottomFitOverlay().composite(
                     bg, fg, center_scale=0.5, opacity=0.7,
-                    enable_rounded_rect_fade=True,
+                    fade_mode="Rounded Rect",
                 )
                 self.assertEqual(image.dtype, dtype)
                 self.assertTrue(torch.equal(image[..., 0], mask))
@@ -69,50 +69,108 @@ class FastBottomFitOverlayTests(unittest.TestCase):
                 self.assertTrue(torch.equal(packed[:, :, 40:], image))
                 self.assertTrue(bool(((mask > 0) & (mask < 0.7)).any()))
 
-    def test_new_controls_are_optional_for_legacy_api_workflows(self):
+    def test_controls_follow_global_then_preset_ui_order(self):
         input_types = FastBottomFitOverlay.INPUT_TYPES()
+        required = input_types["required"]
         optional = input_types["optional"]
 
+        self.assertEqual(
+            list(required),
+            [
+                "background_image",
+                "layer_image",
+                "opacity",
+                "clip_if_too_tall",
+                "enable_packed_output",
+            ],
+        )
+        self.assertNotIn("fade_mode", required)
+        self.assertNotIn("top_fade_ratio", required)
+        self.assertTrue(required["clip_if_too_tall"][1]["advanced"])
         self.assertIn("packed_size_mode", optional)
-        self.assertIn("enable_rounded_rect_fade", optional)
+        self.assertIn("fade_mode", optional)
+        self.assertEqual(optional["fade_mode"][0], ["None", "Top Fade", "Rounded Rect"])
         self.assertIn("rounded_rect_fade_ratio", optional)
         self.assertIn("rounded_corner_radius", optional)
         self.assertIn("foreground_image", optional)
         self.assertIn("foreground_mask", optional)
+        self.assertIn("fade_frames", optional)
         self.assertEqual(optional["preset"][0], ["Custom", "Low Coins", "Standard", "Naked-Eye 3D"])
         self.assertEqual(optional["background_fade_ratio"][1]["default"], 0.0)
         self.assertEqual(optional["center_scale"][1]["default"], 1.0)
+        self.assertEqual(optional["fade_frames"][1]["default"], 0)
+        optional_order = list(optional)
+        self.assertLess(optional_order.index("fade_frames"), optional_order.index("preset"))
+        self.assertLess(optional_order.index("packed_size_mode"), optional_order.index("preset"))
+        self.assertLess(optional_order.index("preset"), optional_order.index("fade_mode"))
+        self.assertLess(optional_order.index("preset"), optional_order.index("center_scale"))
+
+    def test_fade_in_out_affects_complete_stack_but_not_background(self):
+        background = torch.full((5, 2, 2, 3), 0.2)
+        layer = torch.zeros(5, 2, 2, 3)
+        layer[..., 0] = 1.0
+        foreground = torch.zeros(5, 2, 2, 3)
+        foreground[..., 1] = 1.0
+        foreground_mask = torch.zeros(5, 2, 2)
+        foreground_mask[:, :, 0] = 1.0
+
+        image, mask, packed = FastBottomFitOverlay().composite(
+            background,
+            layer,
+            foreground_image=foreground,
+            foreground_mask=foreground_mask,
+            fade_frames=3,
+        )
+
+        self.assertTrue(torch.equal(image[0], background[0]))
+        self.assertTrue(torch.equal(image[-1], background[-1]))
+        self.assertTrue(torch.equal(mask[:, 0, 0], torch.tensor([0.0, 0.5, 1.0, 0.5, 0.0])))
+        self.assertTrue(torch.equal(mask[:, 0, 1], torch.tensor([0.0, 0.5, 1.0, 0.5, 0.0])))
+        self.assertTrue(torch.allclose(image[1, 0, 0], torch.tensor([0.1, 0.6, 0.1])))
+        self.assertTrue(torch.allclose(image[1, 0, 1], torch.tensor([0.6, 0.1, 0.1])))
+        self.assertTrue(torch.equal(image[2, 0, 0], torch.tensor([0.0, 1.0, 0.0])))
+        self.assertTrue(torch.equal(image[2, 0, 1], torch.tensor([1.0, 0.0, 0.0])))
+        self.assertTrue(torch.equal(packed[:, :, :2, 0], mask))
+        self.assertTrue(torch.equal(packed[0], torch.zeros_like(packed[0])))
+        self.assertTrue(torch.equal(packed[-1], torch.zeros_like(packed[-1])))
 
     def test_production_presets_match_the_requested_fade_values(self):
         self.assertEqual(
             FastBottomFitOverlay.PRESET_VALUES,
             {
                 "Low Coins": {
-                    "enable_top_fade": False,
-                    "top_fade_ratio": 0.08,
+                    "fade_mode": "Rounded Rect",
                     "background_fade_ratio": 0.0,
-                    "enable_rounded_rect_fade": True,
-                    "rounded_rect_fade_ratio": 0.5,
-                    "rounded_corner_radius": 0.5,
+                    "rounded_rect_fade_ratio": 0.255,
+                    "rounded_corner_radius": 0.90,
+                    "center_scale": 0.85,
                 },
                 "Standard": {
-                    "enable_top_fade": True,
+                    "fade_mode": "Top Fade",
                     "top_fade_ratio": 0.08,
                     "background_fade_ratio": 0.0,
-                    "enable_rounded_rect_fade": False,
-                    "rounded_rect_fade_ratio": 0.16,
-                    "rounded_corner_radius": 0.30,
                 },
                 "Naked-Eye 3D": {
-                    "enable_top_fade": True,
-                    "top_fade_ratio": 0.03,
+                    "fade_mode": "Top Fade",
+                    "top_fade_ratio": 0.045,
                     "background_fade_ratio": 0.52,
-                    "enable_rounded_rect_fade": False,
-                    "rounded_rect_fade_ratio": 0.16,
-                    "rounded_corner_radius": 0.30,
                 },
             },
         )
+
+    def test_low_coins_preset_overrides_center_scale(self):
+        background = torch.zeros(1, 10, 10, 3)
+        layer = torch.ones(1, 10, 10, 3)
+
+        _, mask, _ = FastBottomFitOverlay().composite(
+            background,
+            layer,
+            preset="Low Coins",
+            center_scale=1.0,
+        )
+
+        self.assertEqual(float(mask[:, :, 0].max()), 0.0)
+        self.assertGreater(float(mask[:, :, 1:-1].max()), 0.0)
 
     def test_background_fade_affects_layer_but_not_restored_foreground(self):
         background = torch.zeros(1, 4, 4, 3)
@@ -162,7 +220,7 @@ class FastBottomFitOverlayTests(unittest.TestCase):
         image, mask, packed = FastBottomFitOverlay().composite(
             background,
             layer,
-            enable_top_fade=True,
+            fade_mode="Top Fade",
             top_fade_ratio=0.5,
             foreground_image=foreground,
             foreground_mask=foreground_mask,
@@ -188,7 +246,7 @@ class FastBottomFitOverlayTests(unittest.TestCase):
             background,
             layer,
             layer_mask=layer_mask,
-            enable_top_fade=True,
+            fade_mode="Top Fade",
             top_fade_ratio=0.5,
             foreground_image=foreground,
             foreground_mask=foreground_mask,
@@ -249,7 +307,7 @@ class FastBottomFitOverlayTests(unittest.TestCase):
         image, mask, packed = FastBottomFitOverlay().composite(
             background,
             foreground,
-            enable_rounded_rect_fade=True,
+            fade_mode="Rounded Rect",
             rounded_rect_fade_ratio=0.16,
             rounded_corner_radius=0.30,
         )
@@ -280,16 +338,15 @@ class FastBottomFitOverlayTests(unittest.TestCase):
         self.assertEqual(float(mask[10, 20]), 1.0)
         self.assertEqual(float(mask[40, 20]), 1.0)
 
-    def test_top_and_rounded_rect_fades_are_mutually_exclusive(self):
+    def test_unknown_fade_mode_is_rejected(self):
         background = torch.zeros(1, 8, 8, 3)
         foreground = torch.ones(1, 4, 8, 3)
 
-        with self.assertRaisesRegex(ValueError, "mutually exclusive"):
+        with self.assertRaisesRegex(ValueError, "Unknown fade_mode"):
             FastBottomFitOverlay().composite(
                 background,
                 foreground,
-                enable_top_fade=True,
-                enable_rounded_rect_fade=True,
+                fade_mode="Both",
             )
 
     def test_rounded_rect_fade_is_applied_to_fixed_canvas_packed_output(self):
@@ -300,7 +357,7 @@ class FastBottomFitOverlayTests(unittest.TestCase):
             background,
             foreground,
             packed_size_mode="Fixed Canvas (1440x1280)",
-            enable_rounded_rect_fade=True,
+            fade_mode="Rounded Rect",
         )[2]
 
         self.assertEqual(tuple(packed.shape), (1, 1280, 1440, 3))
@@ -308,7 +365,7 @@ class FastBottomFitOverlayTests(unittest.TestCase):
         self.assertEqual(float(packed[0, 1040, 360, 0]), 1.0)
         self.assertEqual(float(packed[0, 1040, 1080, 0]), 1.0)
 
-    def test_legacy_positional_layer_mask_argument_still_works(self):
+    def test_layer_mask_controls_packed_output(self):
         background = torch.zeros(1, 8, 6, 3)
         foreground = torch.ones(1, 2, 3, 3)
         layer_mask = torch.zeros(1, 2, 3)
@@ -316,12 +373,7 @@ class FastBottomFitOverlayTests(unittest.TestCase):
         packed = FastBottomFitOverlay().composite(
             background,
             foreground,
-            1.0,
-            True,
-            False,
-            0.08,
-            True,
-            layer_mask,
+            layer_mask=layer_mask,
         )[2]
 
         self.assertEqual(tuple(packed.shape), (1, 4, 12, 3))

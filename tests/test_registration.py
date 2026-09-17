@@ -87,8 +87,9 @@ class RegistrationTests(unittest.TestCase):
         )[0]
         self.assertEqual(state.schema, "gift_chroma_master_v1")
 
-    def test_v5_only_package_has_no_legacy_web_directory(self):
-        self.assertFalse(hasattr(self.suite, "WEB_DIRECTORY"))
+    def test_web_directory_contains_overlay_widget_migration(self):
+        self.assertEqual(self.suite.WEB_DIRECTORY, "./web")
+        self.assertTrue((ROOT / "web" / "fast_bottom_fit_overlay_ui.js").is_file())
 
 
 if __name__ == "__main__":

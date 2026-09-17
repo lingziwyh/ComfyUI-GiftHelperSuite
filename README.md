@@ -1,6 +1,6 @@
 # ComfyUI-GiftHelperSuite
 
-**v0.6.0 · 2026-09-16** · [更新记录](CHANGELOG.md) · [示例工作流](example_workflows/README.md) · [第三方许可](THIRD_PARTY_NOTICES.md)
+**v0.6.1 · 2026-09-17** · [更新记录](CHANGELOG.md) · [示例工作流](example_workflows/README.md) · [第三方许可](THIRD_PARTY_NOTICES.md)
 
 面向 **AI 礼物动效、直播间合成、自动视频抠像和 RGBA ICON** 的 ComfyUI 工具包。
 
@@ -96,8 +96,12 @@ git pull --ff-only
 | `layer_mask` | 可选外部底层遮罩；与内置底层渐变叠乘 |
 | `foreground_image` + `foreground_mask` | 可选贴回前景；不接入前景图像时仍可走普通合成 |
 | `background_fade_ratio` | 背景大渐变，仅作用于礼物底层；0 关闭 |
-| `enable_top_fade` + `top_fade_ratio` | 顶部短羽化，同时影响礼物底层和贴回前景，不改变直播间底图 |
+| `fade_mode` | 空间羽化类型：`None`、`Top Fade`、`Rounded Rect`，三选一 |
+| `top_fade_ratio` | 顶部短羽化长度；同时影响礼物底层和贴回前景，不改变直播间底图 |
 | `center_scale` | 以适配后视频区域中心缩放；画布尺寸不变，1 为原大小、0 为消失 |
+| `fade_frames` | 首尾对称淡入淡出帧数，统一影响除直播间底图外的完整合成结果；0 关闭 |
+
+全局合成参数显示在节点上半区，预设及其控制参数显示在下半区。选择非 `Custom` 预设时，预设实际值会同步显示，被覆盖的控件会锁定；与当前 `fade_mode` 无关的参数会自动禁用；`clip_if_too_tall` 作为通常无需改动的安全项收进高级参数。
 
 前景遮罩使用 `1=保留前景、0=透明` 的含义。贴回前景时应同时连接图像与遮罩；只接前景图像会按不透明图层处理。
 
@@ -105,14 +109,14 @@ git pull --ff-only
 
 ### 预设
 
-| preset | Top Fade | 背景大渐变 | 圆角矩形羽化 | 圆角半径 |
-| --- | --- | --- | --- | --- |
-| `Custom` | 使用手动值 | 使用手动值 | 使用手动值 | 使用手动值 |
-| `Low Coins` | 关闭 | 关闭 | 开启，ratio = 0.5 | 0.5 |
-| `Standard` | 开启，ratio = 0.080 | 关闭 | 关闭 | 不启用 |
-| `Naked-Eye 3D` | 开启，ratio = 0.030 | ratio = 0.52 | 关闭 | 不启用 |
+| preset | Top Fade | 背景大渐变 | 圆角矩形羽化 | 圆角半径 | 中心缩放 |
+| --- | --- | --- | --- | --- | --- |
+| `Custom` | 使用手动值 | 使用手动值 | 使用手动值 | 使用手动值 | 使用手动值 |
+| `Low Coins` | 关闭 | 关闭 | 开启，ratio = 0.255 | 0.90 | 0.85 |
+| `Standard` | 开启，ratio = 0.080 | 关闭 | 关闭 | 不启用 | 使用手动值 |
+| `Naked-Eye 3D` | 开启，ratio = 0.045 | ratio = 0.52 | 关闭 | 不启用 | 使用手动值 |
 
-预设在执行时覆盖相应羽化参数，不会自动调整其他参数。**要手调渐变，先把 preset 设为 `Custom`。** 手动模式下 Top Fade 与圆角矩形羽化互斥。
+预设在执行时只覆盖表中写明的参数。**要手调这些参数，先把 preset 设为 `Custom`。** `fade_mode` 从结构上保证 Top Fade 与 Rounded Rect 不会同时启用。
 
 ### 输出
 
@@ -242,7 +246,7 @@ python -m unittest discover -s tests -p "test_*.py"
 
 单元测试不下载模型。视频抠像功能合并时另做了空模型目录下载、离线复用，以及同参数 124 帧迁移对照；详见[更新记录](CHANGELOG.md)。短片对照不代表所有素材质量都已通过。
 
-版本号由入口 `__version__` 导出；README 与 CHANGELOG 同步维护。此版本为 **v0.6.0**，不意味着已发布到 Comfy Registry。
+版本号由入口 `__version__` 导出；README 与 CHANGELOG 同步维护。此版本为 **v0.6.1**，不意味着已发布到 Comfy Registry。
 
 ## 许可与作者
 

@@ -12,6 +12,8 @@ class FastBottomFitOverlay:
     - Support IMAGE batches efficiently with torch ops
     - Optional MASK for alpha compositing
     - Optional restored foreground IMAGE + MASK composited above the faded layer
+    - Optional symmetric temporal fade applied to the complete composited stack;
+      background_image is never faded
     - Optional built-in top feather fade applied to the complete restored stack
       to soften top-edge cutoffs
     - Optional rounded-rectangle feather mask that follows the resized layer
@@ -30,30 +32,24 @@ class FastBottomFitOverlay:
     """
 
     PRESET_OPTIONS = ("Custom", "Low Coins", "Standard", "Naked-Eye 3D")
+    FADE_MODE_OPTIONS = ("None", "Top Fade", "Rounded Rect")
     PRESET_VALUES = {
         "Low Coins": {
-            "enable_top_fade": False,
-            "top_fade_ratio": 0.08,
+            "fade_mode": "Rounded Rect",
             "background_fade_ratio": 0.0,
-            "enable_rounded_rect_fade": True,
-            "rounded_rect_fade_ratio": 0.5,
-            "rounded_corner_radius": 0.5,
+            "rounded_rect_fade_ratio": 0.255,
+            "rounded_corner_radius": 0.90,
+            "center_scale": 0.85,
         },
         "Standard": {
-            "enable_top_fade": True,
+            "fade_mode": "Top Fade",
             "top_fade_ratio": 0.08,
             "background_fade_ratio": 0.0,
-            "enable_rounded_rect_fade": False,
-            "rounded_rect_fade_ratio": 0.16,
-            "rounded_corner_radius": 0.30,
         },
         "Naked-Eye 3D": {
-            "enable_top_fade": True,
-            "top_fade_ratio": 0.03,
+            "fade_mode": "Top Fade",
+            "top_fade_ratio": 0.045,
             "background_fade_ratio": 0.52,
-            "enable_rounded_rect_fade": False,
-            "rounded_rect_fade_ratio": 0.16,
-            "rounded_corner_radius": 0.30,
         },
     }
 
@@ -74,11 +70,48 @@ class FastBottomFitOverlay:
                 ),
                 "clip_if_too_tall": (
                     "BOOLEAN",
+                    {
+                        "default": True,
+                        "advanced": True,
+                        "tooltip": "安全裁切：图层适配后高于背景时从顶部裁掉溢出部分。通常保持开启。",
+                    },
+                ),
+                "enable_packed_output": (
+                    "BOOLEAN",
                     {"default": True},
                 ),
-                "enable_top_fade": (
-                    "BOOLEAN",
-                    {"default": False},
+            },
+            "optional": {
+                "layer_mask": ("MASK",),
+                "foreground_image": ("IMAGE",),
+                "foreground_mask": ("MASK",),
+                "fade_frames": (
+                    "INT",
+                    {
+                        "default": 0,
+                        "min": 0,
+                        "max": 100000,
+                        "step": 1,
+                        "tooltip": "首尾对称淡入淡出帧数；作用于除 background_image 外的完整合成结果，0 为关闭。",
+                    },
+                ),
+                "packed_size_mode": (
+                    ["Fit Content (Dynamic Height)", "Fixed Canvas (1440x1280)"],
+                    {"default": "Fit Content (Dynamic Height)"},
+                ),
+                "preset": (
+                    list(cls.PRESET_OPTIONS),
+                    {
+                        "default": "Custom",
+                        "tooltip": "Production presets override their configured controls; Custom uses the manual values below.",
+                    },
+                ),
+                "fade_mode": (
+                    list(cls.FADE_MODE_OPTIONS),
+                    {
+                        "default": "None",
+                        "tooltip": "空间羽化类型；Top Fade 与 Rounded Rect 互斥。",
+                    },
                 ),
                 "top_fade_ratio": (
                     "FLOAT",
@@ -89,22 +122,6 @@ class FastBottomFitOverlay:
                         "step": 0.005,
                     },
                 ),
-                "enable_packed_output": (
-                    "BOOLEAN",
-                    {"default": True},
-                ),
-            },
-            "optional": {
-                "preset": (
-                    list(cls.PRESET_OPTIONS),
-                    {
-                        "default": "Custom",
-                        "tooltip": "Production presets override only the fade controls; Custom uses the manual values below.",
-                    },
-                ),
-                "layer_mask": ("MASK",),
-                "foreground_image": ("IMAGE",),
-                "foreground_mask": ("MASK",),
                 "background_fade_ratio": (
                     "FLOAT",
                     {
@@ -114,14 +131,6 @@ class FastBottomFitOverlay:
                         "step": 0.01,
                         "tooltip": "Large top-to-bottom fade applied only to layer_image; 0 disables it.",
                     },
-                ),
-                "packed_size_mode": (
-                    ["Fit Content (Dynamic Height)", "Fixed Canvas (1440x1280)"],
-                    {"default": "Fit Content (Dynamic Height)"},
-                ),
-                "enable_rounded_rect_fade": (
-                    "BOOLEAN",
-                    {"default": False},
                 ),
                 "rounded_rect_fade_ratio": (
                     "FLOAT",
@@ -289,14 +298,13 @@ class FastBottomFitOverlay:
     def _apply_fade_mask(
         self,
         alpha: torch.Tensor,
-        enable_top_fade: bool,
+        fade_mode: str,
         top_fade_ratio: float,
-        enable_rounded_rect_fade: bool,
         rounded_rect_fade_ratio: float,
         rounded_corner_radius: float,
     ) -> torch.Tensor:
         batch, _, height, width = alpha.shape
-        if enable_top_fade:
+        if fade_mode == "Top Fade":
             return alpha * self._make_top_fade_mask(
                 batch,
                 height,
@@ -305,7 +313,7 @@ class FastBottomFitOverlay:
                 alpha.dtype,
                 top_fade_ratio,
             )
-        if enable_rounded_rect_fade:
+        if fade_mode == "Rounded Rect":
             return alpha * self._make_rounded_rect_fade_mask(
                 batch,
                 height,
@@ -331,18 +339,35 @@ class FastBottomFitOverlay:
         left = (width - scaled_w) // 2
         return F.pad(resized, (left, width - scaled_w - left, top, height - scaled_h - top))
 
+    def _make_temporal_fade_envelope(
+        self,
+        batch: int,
+        device,
+        dtype,
+        fade_frames: int,
+    ) -> torch.Tensor:
+        """Match Gift Mask Fade In-Out and return a broadcastable BCHW envelope."""
+        count = max(0, min(int(fade_frames), (batch + 1) // 2))
+        if count == 0:
+            return torch.ones((batch, 1, 1, 1), device=device, dtype=dtype)
+
+        frame = torch.arange(batch, device=device, dtype=dtype)
+        denominator = float(max(1, count - 1))
+        fade_in = (frame / denominator).clamp(0.0, 1.0)
+        fade_out = ((batch - 1 - frame) / denominator).clamp(0.0, 1.0)
+        return torch.minimum(fade_in, fade_out).view(batch, 1, 1, 1)
+
     def composite(
         self,
         background_image,
         layer_image,
         opacity=1.0,
         clip_if_too_tall=True,
-        enable_top_fade=False,
+        fade_mode="None",
         top_fade_ratio=0.08,
         enable_packed_output=True,
         layer_mask=None,
         packed_size_mode="Fit Content (Dynamic Height)",
-        enable_rounded_rect_fade=False,
         rounded_rect_fade_ratio=0.16,
         rounded_corner_radius=0.30,
         center_scale=1.0,
@@ -350,17 +375,21 @@ class FastBottomFitOverlay:
         foreground_mask=None,
         preset="Custom",
         background_fade_ratio=0.0,
+        fade_frames=0,
     ):
         if preset not in self.PRESET_OPTIONS:
             raise ValueError(f"Unknown preset: {preset!r}. Expected one of {self.PRESET_OPTIONS}.")
         if preset != "Custom":
             preset_values = self.PRESET_VALUES[preset]
-            enable_top_fade = preset_values["enable_top_fade"]
-            top_fade_ratio = preset_values["top_fade_ratio"]
-            background_fade_ratio = preset_values["background_fade_ratio"]
-            enable_rounded_rect_fade = preset_values["enable_rounded_rect_fade"]
-            rounded_rect_fade_ratio = preset_values["rounded_rect_fade_ratio"]
-            rounded_corner_radius = preset_values["rounded_corner_radius"]
+            fade_mode = preset_values["fade_mode"]
+            top_fade_ratio = preset_values.get("top_fade_ratio", top_fade_ratio)
+            background_fade_ratio = preset_values.get("background_fade_ratio", background_fade_ratio)
+            rounded_rect_fade_ratio = preset_values.get("rounded_rect_fade_ratio", rounded_rect_fade_ratio)
+            rounded_corner_radius = preset_values.get("rounded_corner_radius", rounded_corner_radius)
+            center_scale = preset_values.get("center_scale", center_scale)
+
+        if fade_mode not in self.FADE_MODE_OPTIONS:
+            raise ValueError(f"Unknown fade_mode: {fade_mode!r}. Expected one of {self.FADE_MODE_OPTIONS}.")
 
         center_scale = float(center_scale)
         if not 0.0 <= center_scale <= 1.0:
@@ -369,11 +398,6 @@ class FastBottomFitOverlay:
         fg = self._ensure_image(layer_image)
         restored_fg = self._ensure_image(foreground_image) if foreground_image is not None else None
 
-        if enable_top_fade and enable_rounded_rect_fade:
-            raise ValueError(
-                "Top fade and rounded-rectangle fade are mutually exclusive. Enable only one fade mode."
-            )
-
         if restored_fg is None:
             bg, fg, batch = self._broadcast_batch(bg, fg)
         else:
@@ -381,6 +405,12 @@ class FastBottomFitOverlay:
 
         device = bg.device
         dtype = bg.dtype
+        temporal_fade = self._make_temporal_fade_envelope(
+            batch,
+            device,
+            dtype,
+            fade_frames,
+        )
 
         bg_h, bg_w = bg.shape[1], bg.shape[2]
         fg_h, fg_w = fg.shape[1], fg.shape[2]
@@ -437,16 +467,15 @@ class FastBottomFitOverlay:
 
         alpha = self._apply_fade_mask(
             alpha,
-            enable_top_fade,
+            fade_mode,
             top_fade_ratio,
-            enable_rounded_rect_fade,
             rounded_rect_fade_ratio,
             rounded_corner_radius,
         )
 
         alpha = (alpha * float(opacity)).clamp(0.0, 1.0)
         if restored_alpha is not None:
-            if enable_top_fade:
+            if fade_mode == "Top Fade":
                 restored_alpha = restored_alpha * self._make_top_fade_mask(
                     batch,
                     resized_h,
@@ -491,9 +520,8 @@ class FastBottomFitOverlay:
                     )
                 packed_alpha = self._apply_fade_mask(
                     packed_alpha,
-                    enable_top_fade,
+                    fade_mode,
                     top_fade_ratio,
-                    enable_rounded_rect_fade,
                     rounded_rect_fade_ratio,
                     rounded_corner_radius,
                 )
@@ -520,7 +548,7 @@ class FastBottomFitOverlay:
                         mode="bilinear",
                         align_corners=False,
                     )
-                    if enable_top_fade:
+                    if fade_mode == "Top Fade":
                         packed_restored_alpha = packed_restored_alpha * self._make_top_fade_mask(
                             batch,
                             fixed_h,
@@ -541,6 +569,8 @@ class FastBottomFitOverlay:
                 packed_restored_fg,
                 packed_restored_alpha,
             )
+            packed_rgb = packed_rgb * temporal_fade
+            packed_alpha = packed_alpha * temporal_fade
             if center_scale != 1.0:
                 if packed_size_mode == "Fixed Canvas (1440x1280)":
                     packed_rgb = packed_rgb[:, :, -1280:, :]
@@ -600,6 +630,8 @@ class FastBottomFitOverlay:
             restored_fg_preview,
             restored_alpha_preview,
         )
+        combined_rgb = combined_rgb * temporal_fade
+        alpha_preview = alpha_preview * temporal_fade
         a_region = alpha_preview.permute(0, 2, 3, 1).contiguous()
 
         if center_scale == 1.0:
