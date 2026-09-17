@@ -14,6 +14,11 @@ const PRESET_VALUES = {
         top_fade_ratio: 0.08,
         background_fade_ratio: 0.0,
     },
+    "Hybrid Naked-Eye 3D": {
+        fade_mode: "None",
+        background_fade_ratio: 0.0,
+        center_scale: 0.95,
+    },
     "Naked-Eye 3D": {
         fade_mode: "Top Fade",
         top_fade_ratio: 0.045,

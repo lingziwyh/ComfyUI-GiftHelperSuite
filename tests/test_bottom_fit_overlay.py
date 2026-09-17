@@ -95,7 +95,10 @@ class FastBottomFitOverlayTests(unittest.TestCase):
         self.assertIn("foreground_image", optional)
         self.assertIn("foreground_mask", optional)
         self.assertIn("fade_frames", optional)
-        self.assertEqual(optional["preset"][0], ["Custom", "Low Coins", "Standard", "Naked-Eye 3D"])
+        self.assertEqual(
+            optional["preset"][0],
+            ["Custom", "Low Coins", "Standard", "Hybrid Naked-Eye 3D", "Naked-Eye 3D"],
+        )
         self.assertEqual(optional["background_fade_ratio"][1]["default"], 0.0)
         self.assertEqual(optional["center_scale"][1]["default"], 1.0)
         self.assertEqual(optional["fade_frames"][1]["default"], 0)
@@ -150,6 +153,11 @@ class FastBottomFitOverlayTests(unittest.TestCase):
                     "top_fade_ratio": 0.08,
                     "background_fade_ratio": 0.0,
                 },
+                "Hybrid Naked-Eye 3D": {
+                    "fade_mode": "None",
+                    "background_fade_ratio": 0.0,
+                    "center_scale": 0.95,
+                },
                 "Naked-Eye 3D": {
                     "fade_mode": "Top Fade",
                     "top_fade_ratio": 0.045,
@@ -171,6 +179,58 @@ class FastBottomFitOverlayTests(unittest.TestCase):
 
         self.assertEqual(float(mask[:, :, 0].max()), 0.0)
         self.assertGreater(float(mask[:, :, 1:-1].max()), 0.0)
+
+    def test_hybrid_preset_uses_compact_scene_and_broad_asymmetric_foreground_guard(self):
+        node = FastBottomFitOverlay()
+        scene = node._make_hybrid_scene_mask(1, 101, 101, "cpu", torch.float32)[0, 0]
+        guard = node._make_hybrid_foreground_guard_mask(1, 101, 101, "cpu", torch.float32)[0, 0]
+
+        self.assertEqual(float(scene[50, 50]), 1.0)
+        self.assertEqual(float(guard[50, 50]), 1.0)
+        self.assertGreater(float(guard[50, 5]), float(scene[50, 5]))
+        self.assertGreater(float(guard[25, 10]), float(guard[75, 10]))
+        self.assertEqual(float(guard[90, 10]), 0.0)
+
+        bottom_fill = node._make_hybrid_bottom_fill_mask(1, 101, 101, "cpu", torch.float32)[0, 0]
+        self.assertEqual(float(bottom_fill[43, 50]), 0.0)
+        self.assertGreater(float(bottom_fill[50, 50]), 0.0)
+        self.assertGreater(float(bottom_fill[60, 50]), 0.99)
+
+    def test_hybrid_foreground_boundary_gets_a_short_soft_feather(self):
+        alpha = torch.zeros(1, 1, 101, 101)
+        alpha[:, :, :, :50] = 1.0
+
+        feathered = FastBottomFitOverlay()._feather_hybrid_foreground_boundary(alpha)
+
+        self.assertGreater(float(feathered[0, 0, 50, 20]), 0.99)
+        self.assertGreater(float(feathered[0, 0, 50, 49]), 0.0)
+        self.assertLess(float(feathered[0, 0, 50, 49]), 1.0)
+        self.assertGreater(float(feathered[0, 0, 50, 50]), 0.0)
+        self.assertEqual(float(feathered[0, 0, 50, 70]), 0.0)
+
+    def test_hybrid_preset_applies_both_masks_and_overrides_center_scale(self):
+        background = torch.zeros(1, 101, 101, 3)
+        layer = torch.zeros_like(background)
+        layer[..., 0] = 1.0
+        foreground = torch.zeros_like(background)
+        foreground[..., 1] = 1.0
+        foreground_mask = torch.zeros(1, 101, 101)
+
+        image, mask, packed = FastBottomFitOverlay().composite(
+            background,
+            layer,
+            foreground_image=foreground,
+            foreground_mask=foreground_mask,
+            preset="Hybrid Naked-Eye 3D",
+            center_scale=1.0,
+        )
+
+        self.assertTrue(torch.equal(mask[:, :, :2], torch.zeros_like(mask[:, :, :2])))
+        self.assertGreater(float(mask[0, 50, 50]), 0.99)
+        self.assertGreater(float(image[0, 25, 50, 0]), float(image[0, 25, 50, 1]))
+        self.assertGreater(float(image[0, 70, 50, 1]), float(image[0, 70, 50, 0]))
+        self.assertEqual(tuple(packed.shape), (1, 101, 202, 3))
+        self.assertTrue(torch.allclose(packed[:, :, :101, 0], mask))
 
     def test_background_fade_affects_layer_but_not_restored_foreground(self):
         background = torch.zeros(1, 4, 4, 3)

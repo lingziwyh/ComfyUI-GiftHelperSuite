@@ -31,7 +31,13 @@ class FastBottomFitOverlay:
     MASK format is expected to be [B, H, W] or [H, W]
     """
 
-    PRESET_OPTIONS = ("Custom", "Low Coins", "Standard", "Naked-Eye 3D")
+    PRESET_OPTIONS = (
+        "Custom",
+        "Low Coins",
+        "Standard",
+        "Hybrid Naked-Eye 3D",
+        "Naked-Eye 3D",
+    )
     FADE_MODE_OPTIONS = ("None", "Top Fade", "Rounded Rect")
     PRESET_VALUES = {
         "Low Coins": {
@@ -45,6 +51,11 @@ class FastBottomFitOverlay:
             "fade_mode": "Top Fade",
             "top_fade_ratio": 0.08,
             "background_fade_ratio": 0.0,
+        },
+        "Hybrid Naked-Eye 3D": {
+            "fade_mode": "None",
+            "background_fade_ratio": 0.0,
+            "center_scale": 0.95,
         },
         "Naked-Eye 3D": {
             "fade_mode": "Top Fade",
@@ -325,6 +336,148 @@ class FastBottomFitOverlay:
             )
         return alpha
 
+    def _make_hybrid_scene_mask(
+        self,
+        batch: int,
+        height: int,
+        width: int,
+        device,
+        dtype,
+    ) -> torch.Tensor:
+        """Return the compact elliptical scene window used by the hybrid preset."""
+        radius_y = float(height) * 0.5
+        radius_x = float(width) * 0.5
+        y = (torch.arange(height, device=device, dtype=dtype) + 0.5 - radius_y) / radius_y
+        x = (torch.arange(width, device=device, dtype=dtype) + 0.5 - radius_x) / radius_x
+        radial_distance = torch.sqrt(y[:, None].square() + x[None, :].square())
+
+        # Fitted to the production reference mask: a continuous radial falloff
+        # with no hard white plateau and a clean zero outside the ellipse.
+        scene = (1.0 - radial_distance.pow(1.6)).clamp_min(0.0).pow(1.15)
+        return scene.view(1, 1, height, width).expand(batch, 1, height, width)
+
+    def _make_hybrid_foreground_guard_mask(
+        self,
+        batch: int,
+        height: int,
+        width: int,
+        device,
+        dtype,
+    ) -> torch.Tensor:
+        """Return the broad asymmetric guard used around the restored foreground."""
+        radius_y = float(height) * 0.5
+        radius_x = float(width) * 0.5
+        y = (torch.arange(height, device=device, dtype=dtype) + 0.5 - radius_y) / radius_y
+        x = (torch.arange(width, device=device, dtype=dtype) + 0.5 - radius_x) / radius_x
+        abs_y = y[:, None].abs()
+        abs_x = x[None, :].abs()
+
+        # The upper half behaves like a lightly rounded card while the lower
+        # half closes into a large ellipse. This preserves the subject's upper
+        # silhouette but softly returns the lower frame to the livestream.
+        corner_radius = torch.where(
+            y[:, None] < 0.0,
+            torch.full((height, 1), 0.25, device=device, dtype=dtype),
+            torch.ones((height, 1), device=device, dtype=dtype),
+        )
+        straight_extent = 1.0 - corner_radius
+        q_y = abs_y - straight_extent
+        q_x = abs_x - straight_extent
+        outside_distance = torch.sqrt(q_y.clamp_min(0.0).square() + q_x.clamp_min(0.0).square())
+        inside_distance = torch.minimum(torch.maximum(q_y, q_x), torch.zeros_like(q_y + q_x))
+        signed_distance = outside_distance + inside_distance - corner_radius
+        guard = (-signed_distance / 0.24).clamp(0.0, 1.0)
+        return guard.view(1, 1, height, width).expand(batch, 1, height, width)
+
+    def _make_hybrid_bottom_fill_mask(
+        self,
+        batch: int,
+        height: int,
+        width: int,
+        device,
+        dtype,
+    ) -> torch.Tensor:
+        """Fill the lower frame so imperfect subject mattes cannot punch holes through it."""
+        y = (torch.arange(height, device=device, dtype=dtype) + 0.5) / float(height)
+        fill = ((y - 0.44) / 0.16).clamp(0.0, 1.0)
+        fill = fill.pow(3.0) * (fill * (fill * 6.0 - 15.0) + 10.0)
+        return fill.view(1, 1, height, 1).expand(batch, 1, height, width)
+
+    def _feather_hybrid_foreground_boundary(self, alpha: torch.Tensor) -> torch.Tensor:
+        """Apply a subtle resolution-aware feather to the final hybrid foreground edge."""
+        height, width = alpha.shape[-2:]
+        sigma = max(0.75, min(4.0, float(min(height, width)) * 0.0025))
+        radius = max(1, int(round(sigma * 2.0)))
+        coordinates = torch.arange(-radius, radius + 1, device=alpha.device, dtype=alpha.dtype)
+        kernel = torch.exp(-0.5 * (coordinates / sigma).square())
+        kernel = kernel / kernel.sum()
+
+        horizontal = kernel.view(1, 1, 1, -1)
+        vertical = kernel.view(1, 1, -1, 1)
+        feathered = F.conv2d(F.pad(alpha, (radius, radius, 0, 0)), horizontal)
+        feathered = F.conv2d(F.pad(feathered, (0, 0, radius, radius)), vertical)
+        return feathered.clamp(0.0, 1.0)
+
+    def _apply_layer_spatial_masks(
+        self,
+        alpha: torch.Tensor,
+        hybrid_mode: bool,
+        fade_mode: str,
+        top_fade_ratio: float,
+        background_fade_ratio: float,
+        rounded_rect_fade_ratio: float,
+        rounded_corner_radius: float,
+    ) -> torch.Tensor:
+        batch, _, height, width = alpha.shape
+        if hybrid_mode:
+            return alpha * self._make_hybrid_scene_mask(
+                batch, height, width, alpha.device, alpha.dtype
+            )
+        if background_fade_ratio > 0.0:
+            alpha = alpha * self._make_top_fade_mask(
+                batch,
+                height,
+                width,
+                alpha.device,
+                alpha.dtype,
+                background_fade_ratio,
+            )
+        return self._apply_fade_mask(
+            alpha,
+            fade_mode,
+            top_fade_ratio,
+            rounded_rect_fade_ratio,
+            rounded_corner_radius,
+        )
+
+    def _apply_foreground_spatial_mask(
+        self,
+        alpha: torch.Tensor,
+        hybrid_mode: bool,
+        fade_mode: str,
+        top_fade_ratio: float,
+    ) -> torch.Tensor:
+        batch, _, height, width = alpha.shape
+        if hybrid_mode:
+            bottom_fill = self._make_hybrid_bottom_fill_mask(
+                batch, height, width, alpha.device, alpha.dtype
+            )
+            guard = self._make_hybrid_foreground_guard_mask(
+                batch, height, width, alpha.device, alpha.dtype
+            )
+            combined = torch.maximum(alpha, bottom_fill) * guard
+            return self._feather_hybrid_foreground_boundary(combined)
+        if fade_mode == "Top Fade":
+            return alpha * self._make_top_fade_mask(
+                batch,
+                height,
+                width,
+                alpha.device,
+                alpha.dtype,
+                top_fade_ratio,
+            )
+        return alpha
+
     def _scale_about_center(self, tensor: torch.Tensor, scale: float) -> torch.Tensor:
         """Scale BCHW content inside its existing canvas, leaving empty margins."""
         if scale == 1.0:
@@ -379,6 +532,7 @@ class FastBottomFitOverlay:
     ):
         if preset not in self.PRESET_OPTIONS:
             raise ValueError(f"Unknown preset: {preset!r}. Expected one of {self.PRESET_OPTIONS}.")
+        hybrid_mode = preset == "Hybrid Naked-Eye 3D"
         if preset != "Custom":
             preset_values = self.PRESET_VALUES[preset]
             fade_mode = preset_values["fade_mode"]
@@ -455,35 +609,24 @@ class FastBottomFitOverlay:
         alpha = self._ensure_mask(layer_mask, batch, fg_h, fg_w, device, dtype)
         alpha = F.interpolate(alpha, size=(resized_h, packed_w), mode="bilinear", align_corners=False)
 
-        if background_fade_ratio > 0.0:
-            alpha = alpha * self._make_top_fade_mask(
-                batch,
-                resized_h,
-                packed_w,
-                device,
-                dtype,
-                background_fade_ratio,
-            )
-
-        alpha = self._apply_fade_mask(
+        alpha = self._apply_layer_spatial_masks(
             alpha,
+            hybrid_mode,
             fade_mode,
             top_fade_ratio,
+            background_fade_ratio,
             rounded_rect_fade_ratio,
             rounded_corner_radius,
         )
 
         alpha = (alpha * float(opacity)).clamp(0.0, 1.0)
         if restored_alpha is not None:
-            if fade_mode == "Top Fade":
-                restored_alpha = restored_alpha * self._make_top_fade_mask(
-                    batch,
-                    resized_h,
-                    packed_w,
-                    device,
-                    dtype,
-                    top_fade_ratio,
-                )
+            restored_alpha = self._apply_foreground_spatial_mask(
+                restored_alpha,
+                hybrid_mode,
+                fade_mode,
+                top_fade_ratio,
+            )
             restored_alpha = (restored_alpha * float(opacity)).clamp(0.0, 1.0)
 
         # Packed output is either content-sized or bottom-aligned on a fixed canvas.
@@ -509,19 +652,12 @@ class FastBottomFitOverlay:
                     mode="bilinear",
                     align_corners=False,
                 )
-                if background_fade_ratio > 0.0:
-                    packed_alpha = packed_alpha * self._make_top_fade_mask(
-                        batch,
-                        fixed_h,
-                        720,
-                        device,
-                        dtype,
-                        background_fade_ratio,
-                    )
-                packed_alpha = self._apply_fade_mask(
+                packed_alpha = self._apply_layer_spatial_masks(
                     packed_alpha,
+                    hybrid_mode,
                     fade_mode,
                     top_fade_ratio,
+                    background_fade_ratio,
                     rounded_rect_fade_ratio,
                     rounded_corner_radius,
                 )
@@ -548,15 +684,12 @@ class FastBottomFitOverlay:
                         mode="bilinear",
                         align_corners=False,
                     )
-                    if fade_mode == "Top Fade":
-                        packed_restored_alpha = packed_restored_alpha * self._make_top_fade_mask(
-                            batch,
-                            fixed_h,
-                            720,
-                            device,
-                            dtype,
-                            top_fade_ratio,
-                        )
+                    packed_restored_alpha = self._apply_foreground_spatial_mask(
+                        packed_restored_alpha,
+                        hybrid_mode,
+                        fade_mode,
+                        top_fade_ratio,
+                    )
                     packed_restored_alpha = (
                         packed_restored_alpha * float(opacity)
                     ).clamp(0.0, 1.0)
