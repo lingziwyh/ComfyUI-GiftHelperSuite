@@ -7,7 +7,6 @@ const PRESET_VALUES = {
         background_fade_ratio: 0.0,
         rounded_rect_fade_ratio: 0.255,
         rounded_corner_radius: 0.90,
-        center_scale: 0.85,
     },
     Standard: {
         fade_mode: "Top Fade",
@@ -17,7 +16,6 @@ const PRESET_VALUES = {
     "Hybrid Naked-Eye 3D": {
         fade_mode: "None",
         background_fade_ratio: 0.0,
-        center_scale: 0.95,
     },
     "Naked-Eye 3D": {
         fade_mode: "Top Fade",
@@ -32,7 +30,6 @@ const CONTROLLED_WIDGETS = new Set([
     "background_fade_ratio",
     "rounded_rect_fade_ratio",
     "rounded_corner_radius",
-    "center_scale",
 ]);
 
 function isInactiveForMode(widgetName, fadeMode) {
@@ -59,6 +56,17 @@ function restoreCustomValues(node) {
     }
 }
 
+function captureEditableValues(node, presetName) {
+    const values = PRESET_VALUES[presetName] ?? null;
+    node._giftCustomValues ??= {};
+    for (const widget of node.widgets ?? []) {
+        if (!CONTROLLED_WIDGETS.has(widget.name)) continue;
+        const presetControlled = values !== null
+            && Object.prototype.hasOwnProperty.call(values, widget.name);
+        if (!presetControlled) node._giftCustomValues[widget.name] = widget.value;
+    }
+}
+
 function refreshWidgetState(node, presetName) {
     const values = PRESET_VALUES[presetName] ?? null;
     const fadeMode = node.widgets?.find((widget) => widget.name === "fade_mode")?.value ?? "None";
@@ -76,9 +84,7 @@ function refreshWidgetState(node, presetName) {
 }
 
 function syncPresetUI(node, presetName) {
-    if ((node._giftActivePreset ?? "Custom") === "Custom" && presetName !== "Custom") {
-        captureCustomValues(node);
-    }
+    captureEditableValues(node, node._giftActivePreset ?? "Custom");
     restoreCustomValues(node);
     const values = PRESET_VALUES[presetName] ?? null;
     if (values !== null) {

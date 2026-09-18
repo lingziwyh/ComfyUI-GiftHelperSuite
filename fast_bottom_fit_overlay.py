@@ -45,7 +45,6 @@ class FastBottomFitOverlay:
             "background_fade_ratio": 0.0,
             "rounded_rect_fade_ratio": 0.255,
             "rounded_corner_radius": 0.90,
-            "center_scale": 0.85,
         },
         "Standard": {
             "fade_mode": "Top Fade",
@@ -55,7 +54,6 @@ class FastBottomFitOverlay:
         "Hybrid Naked-Eye 3D": {
             "fade_mode": "None",
             "background_fade_ratio": 0.0,
-            "center_scale": 0.95,
         },
         "Naked-Eye 3D": {
             "fade_mode": "Top Fade",
@@ -282,6 +280,30 @@ class FastBottomFitOverlay:
         """Return a rounded rectangle that continuously becomes an ellipse."""
         fade_ratio = float(max(0.0, min(0.5, fade_ratio)))
         corner_radius_ratio = float(max(0.0, min(1.0, corner_radius_ratio)))
+        signed_distance = self._make_normalized_rounded_rect_signed_distance(
+            height,
+            width,
+            device,
+            dtype,
+            corner_radius_ratio,
+        )
+
+        if fade_ratio <= 0.0:
+            rounded_rect = (signed_distance <= 0.0).to(dtype=dtype)
+        else:
+            rounded_rect = (-signed_distance / fade_ratio).clamp(0.0, 1.0)
+
+        return rounded_rect.view(1, 1, height, width).expand(batch, 1, height, width)
+
+    def _make_normalized_rounded_rect_signed_distance(
+        self,
+        height: int,
+        width: int,
+        device,
+        dtype,
+        corner_radius_ratio,
+    ) -> torch.Tensor:
+        """Return an aspect-ratio-aware rounded-rectangle distance field."""
         radius_y = float(height) * 0.5
         radius_x = float(width) * 0.5
 
@@ -292,19 +314,17 @@ class FastBottomFitOverlay:
 
         # Signed distance in normalized layer coordinates. At radius 0 this is
         # a rectangle; at radius 1 the straight sections vanish into an ellipse.
+        corner_radius_ratio = torch.as_tensor(
+            corner_radius_ratio,
+            device=device,
+            dtype=dtype,
+        ).clamp(0.0, 1.0)
         straight_extent = 1.0 - corner_radius_ratio
         q_y = abs_y - straight_extent
         q_x = abs_x - straight_extent
         outside_distance = torch.sqrt(q_y.clamp_min(0.0).square() + q_x.clamp_min(0.0).square())
         inside_distance = torch.minimum(torch.maximum(q_y, q_x), torch.zeros_like(q_y + q_x))
-        signed_distance = outside_distance + inside_distance - corner_radius_ratio
-
-        if fade_ratio <= 0.0:
-            rounded_rect = (signed_distance <= 0.0).to(dtype=dtype)
-        else:
-            rounded_rect = (-signed_distance / fade_ratio).clamp(0.0, 1.0)
-
-        return rounded_rect.view(1, 1, height, width).expand(batch, 1, height, width)
+        return outside_distance + inside_distance - corner_radius_ratio
 
     def _apply_fade_mask(
         self,
@@ -344,16 +364,19 @@ class FastBottomFitOverlay:
         device,
         dtype,
     ) -> torch.Tensor:
-        """Return the compact elliptical scene window used by the hybrid preset."""
+        """Return the broad rounded-rectangle scene window used by the hybrid preset."""
         radius_y = float(height) * 0.5
         radius_x = float(width) * 0.5
         y = (torch.arange(height, device=device, dtype=dtype) + 0.5 - radius_y) / radius_y
         x = (torch.arange(width, device=device, dtype=dtype) + 0.5 - radius_x) / radius_x
-        radial_distance = torch.sqrt(y[:, None].square() + x[None, :].square())
 
-        # Fitted to the production reference mask: a continuous radial falloff
-        # with no hard white plateau and a clean zero outside the ellipse.
-        scene = (1.0 - radial_distance.pow(1.6)).clamp_min(0.0).pow(1.15)
+        # A fourth-order superellipse closely matches a half-radius rounded
+        # rectangle while keeping every centre-to-edge contour smooth. Unlike
+        # an inward feather band, it never creates a broad solid-white plateau.
+        rounded_distance = (
+            y[:, None].abs().pow(4.0) + x[None, :].abs().pow(4.0)
+        ).pow(0.25)
+        scene = (1.0 - rounded_distance.pow(1.6)).clamp_min(0.0).pow(1.15)
         return scene.view(1, 1, height, width).expand(batch, 1, height, width)
 
     def _make_hybrid_foreground_guard_mask(
@@ -366,26 +389,23 @@ class FastBottomFitOverlay:
     ) -> torch.Tensor:
         """Return the broad asymmetric guard used around the restored foreground."""
         radius_y = float(height) * 0.5
-        radius_x = float(width) * 0.5
         y = (torch.arange(height, device=device, dtype=dtype) + 0.5 - radius_y) / radius_y
-        x = (torch.arange(width, device=device, dtype=dtype) + 0.5 - radius_x) / radius_x
-        abs_y = y[:, None].abs()
-        abs_x = x[None, :].abs()
 
         # The upper half behaves like a lightly rounded card while the lower
-        # half closes into a large ellipse. This preserves the subject's upper
-        # silhouette but softly returns the lower frame to the livestream.
+        # half uses a broader half-radius rounded rectangle. This preserves
+        # more of wide and tall videos than the former lower half-ellipse.
         corner_radius = torch.where(
             y[:, None] < 0.0,
             torch.full((height, 1), 0.25, device=device, dtype=dtype),
-            torch.ones((height, 1), device=device, dtype=dtype),
+            torch.full((height, 1), 0.5, device=device, dtype=dtype),
         )
-        straight_extent = 1.0 - corner_radius
-        q_y = abs_y - straight_extent
-        q_x = abs_x - straight_extent
-        outside_distance = torch.sqrt(q_y.clamp_min(0.0).square() + q_x.clamp_min(0.0).square())
-        inside_distance = torch.minimum(torch.maximum(q_y, q_x), torch.zeros_like(q_y + q_x))
-        signed_distance = outside_distance + inside_distance - corner_radius
+        signed_distance = self._make_normalized_rounded_rect_signed_distance(
+            height,
+            width,
+            device,
+            dtype,
+            corner_radius,
+        )
         guard = (-signed_distance / 0.24).clamp(0.0, 1.0)
         return guard.view(1, 1, height, width).expand(batch, 1, height, width)
 
@@ -399,7 +419,7 @@ class FastBottomFitOverlay:
     ) -> torch.Tensor:
         """Fill the lower frame so imperfect subject mattes cannot punch holes through it."""
         y = (torch.arange(height, device=device, dtype=dtype) + 0.5) / float(height)
-        fill = ((y - 0.44) / 0.16).clamp(0.0, 1.0)
+        fill = ((y - 0.40) / 0.20).clamp(0.0, 1.0)
         fill = fill.pow(3.0) * (fill * (fill * 6.0 - 15.0) + 10.0)
         return fill.view(1, 1, height, 1).expand(batch, 1, height, width)
 
@@ -540,7 +560,6 @@ class FastBottomFitOverlay:
             background_fade_ratio = preset_values.get("background_fade_ratio", background_fade_ratio)
             rounded_rect_fade_ratio = preset_values.get("rounded_rect_fade_ratio", rounded_rect_fade_ratio)
             rounded_corner_radius = preset_values.get("rounded_corner_radius", rounded_corner_radius)
-            center_scale = preset_values.get("center_scale", center_scale)
 
         if fade_mode not in self.FADE_MODE_OPTIONS:
             raise ValueError(f"Unknown fade_mode: {fade_mode!r}. Expected one of {self.FADE_MODE_OPTIONS}.")

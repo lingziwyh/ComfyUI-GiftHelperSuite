@@ -146,7 +146,6 @@ class FastBottomFitOverlayTests(unittest.TestCase):
                     "background_fade_ratio": 0.0,
                     "rounded_rect_fade_ratio": 0.255,
                     "rounded_corner_radius": 0.90,
-                    "center_scale": 0.85,
                 },
                 "Standard": {
                     "fade_mode": "Top Fade",
@@ -156,7 +155,6 @@ class FastBottomFitOverlayTests(unittest.TestCase):
                 "Hybrid Naked-Eye 3D": {
                     "fade_mode": "None",
                     "background_fade_ratio": 0.0,
-                    "center_scale": 0.95,
                 },
                 "Naked-Eye 3D": {
                     "fade_mode": "Top Fade",
@@ -166,33 +164,50 @@ class FastBottomFitOverlayTests(unittest.TestCase):
             },
         )
 
-    def test_low_coins_preset_overrides_center_scale(self):
-        background = torch.zeros(1, 10, 10, 3)
-        layer = torch.ones(1, 10, 10, 3)
+    def test_low_coins_preset_respects_user_center_scale(self):
+        background = torch.zeros(1, 101, 101, 3)
+        layer = torch.ones_like(background)
 
-        _, mask, _ = FastBottomFitOverlay().composite(
+        _, full_mask, _ = FastBottomFitOverlay().composite(
             background,
             layer,
             preset="Low Coins",
             center_scale=1.0,
         )
+        _, half_mask, _ = FastBottomFitOverlay().composite(
+            background,
+            layer,
+            preset="Low Coins",
+            center_scale=0.5,
+        )
 
-        self.assertEqual(float(mask[:, :, 0].max()), 0.0)
-        self.assertGreater(float(mask[:, :, 1:-1].max()), 0.0)
+        self.assertGreater(float(full_mask[0, 50, 20]), 0.0)
+        self.assertEqual(float(half_mask[0, 50, 20]), 0.0)
+        self.assertGreater(float(half_mask[0, 50, 50]), 0.0)
 
-    def test_hybrid_preset_uses_compact_scene_and_broad_asymmetric_foreground_guard(self):
+    def test_hybrid_preset_uses_rounded_scene_and_broad_asymmetric_foreground_guard(self):
         node = FastBottomFitOverlay()
         scene = node._make_hybrid_scene_mask(1, 101, 101, "cpu", torch.float32)[0, 0]
         guard = node._make_hybrid_foreground_guard_mask(1, 101, 101, "cpu", torch.float32)[0, 0]
 
         self.assertEqual(float(scene[50, 50]), 1.0)
+        self.assertLess(float(scene[50, 51]), 1.0)
         self.assertEqual(float(guard[50, 50]), 1.0)
         self.assertGreater(float(guard[50, 5]), float(scene[50, 5]))
-        self.assertGreater(float(guard[25, 10]), float(guard[75, 10]))
-        self.assertEqual(float(guard[90, 10]), 0.0)
+        self.assertGreater(float(guard[10, 10]), float(guard[90, 10]))
+        self.assertGreater(float(scene[20, 20]), 0.35)
+        self.assertLess(float((scene >= 0.95).float().mean()), 0.05)
+        self.assertGreater(float(guard[90, 10]), 0.0)
+        self.assertEqual(float(guard[100, 0]), 0.0)
+
+        wide_scene = node._make_hybrid_scene_mask(1, 81, 161, "cpu", torch.float32)[0, 0]
+        tall_scene = node._make_hybrid_scene_mask(1, 161, 81, "cpu", torch.float32)[0, 0]
+        self.assertTrue(torch.allclose(wide_scene, tall_scene.transpose(0, 1)))
+        self.assertEqual(float(wide_scene[40, 80]), 1.0)
+        self.assertEqual(float(wide_scene[0, 0]), 0.0)
 
         bottom_fill = node._make_hybrid_bottom_fill_mask(1, 101, 101, "cpu", torch.float32)[0, 0]
-        self.assertEqual(float(bottom_fill[43, 50]), 0.0)
+        self.assertEqual(float(bottom_fill[39, 50]), 0.0)
         self.assertGreater(float(bottom_fill[50, 50]), 0.0)
         self.assertGreater(float(bottom_fill[60, 50]), 0.99)
 
@@ -208,7 +223,7 @@ class FastBottomFitOverlayTests(unittest.TestCase):
         self.assertGreater(float(feathered[0, 0, 50, 50]), 0.0)
         self.assertEqual(float(feathered[0, 0, 50, 70]), 0.0)
 
-    def test_hybrid_preset_applies_both_masks_and_overrides_center_scale(self):
+    def test_hybrid_preset_applies_both_masks(self):
         background = torch.zeros(1, 101, 101, 3)
         layer = torch.zeros_like(background)
         layer[..., 0] = 1.0
@@ -222,7 +237,7 @@ class FastBottomFitOverlayTests(unittest.TestCase):
             foreground_image=foreground,
             foreground_mask=foreground_mask,
             preset="Hybrid Naked-Eye 3D",
-            center_scale=1.0,
+            center_scale=0.95,
         )
 
         self.assertTrue(torch.equal(mask[:, :, :2], torch.zeros_like(mask[:, :, :2])))
@@ -231,6 +246,27 @@ class FastBottomFitOverlayTests(unittest.TestCase):
         self.assertGreater(float(image[0, 70, 50, 1]), float(image[0, 70, 50, 0]))
         self.assertEqual(tuple(packed.shape), (1, 101, 202, 3))
         self.assertTrue(torch.allclose(packed[:, :, :101, 0], mask))
+
+    def test_hybrid_preset_respects_user_center_scale(self):
+        background = torch.zeros(1, 101, 101, 3)
+        layer = torch.ones_like(background)
+
+        _, full_mask, _ = FastBottomFitOverlay().composite(
+            background,
+            layer,
+            preset="Hybrid Naked-Eye 3D",
+            center_scale=1.0,
+        )
+        _, half_mask, _ = FastBottomFitOverlay().composite(
+            background,
+            layer,
+            preset="Hybrid Naked-Eye 3D",
+            center_scale=0.5,
+        )
+
+        self.assertGreater(float(full_mask[0, 50, 20]), 0.0)
+        self.assertEqual(float(half_mask[0, 50, 20]), 0.0)
+        self.assertGreater(float(half_mask[0, 50, 50]), 0.0)
 
     def test_background_fade_affects_layer_but_not_restored_foreground(self):
         background = torch.zeros(1, 4, 4, 3)
