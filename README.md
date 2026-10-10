@@ -124,10 +124,11 @@ git pull --ff-only
 - `mask`：最终礼物图层遮罩。
 - `packed_image`：左侧为 RGB 遮罩，右侧为黑底预乘 RGB 内容；不是 RGBA 图像。
 
-Packed 支持两种尺寸：
+Packed 支持三种尺寸：
 
 - `Fit Content (Dynamic Height)`：保持适配后礼物高度；宽度为背景宽度的两倍。
 - `Fixed Canvas (1440x1280)`：左右各 720 像素，内容贴底并在上方补黑。
+- `Original Size`（原始尺寸）：每栏保留 `layer_image` 原始宽高，输出为 `2W × H`，不受 1440px 限制，不随背景尺寸缩放、补黑或裁切。例如输入 1080×1920，输出 2160×1920；遮罩、羽化、透明度、前景恢复及中心缩放仍然生效。
 
 `center_scale` 对预览及 Packed 输出的 RGB / Alpha 同步生效；超过可见画布的内容按既有裁切规则处理。
 

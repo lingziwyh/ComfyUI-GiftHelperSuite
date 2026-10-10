@@ -26,6 +26,8 @@ class FastBottomFitOverlay:
       background height. Its size is [B, resized_h, background_w * 2, 3].
       Fixed Canvas (1440x1280) uses two 720px-wide panels, bottom-aligns the
       packed content, and pads the top with black pixels.
+      Original Size keeps layer_image dimensions in each panel, without a size
+      limit, resizing to the background, or canvas padding/cropping.
 
     IMAGE format in ComfyUI is expected to be [B, H, W, C], float32/float16 in [0, 1]
     MASK format is expected to be [B, H, W] or [H, W]
@@ -105,8 +107,11 @@ class FastBottomFitOverlay:
                     },
                 ),
                 "packed_size_mode": (
-                    ["Fit Content (Dynamic Height)", "Fixed Canvas (1440x1280)"],
-                    {"default": "Fit Content (Dynamic Height)"},
+                    ["Fit Content (Dynamic Height)", "Fixed Canvas (1440x1280)", "Original Size"],
+                    {
+                        "default": "Fit Content (Dynamic Height)",
+                        "tooltip": "Original Size（原始尺寸）：每栏保留 layer_image 的原始宽高，输出宽度为原宽度的两倍，不限制 1440px。",
+                    },
                 ),
                 "preset": (
                     list(cls.PRESET_OPTIONS),
@@ -648,26 +653,30 @@ class FastBottomFitOverlay:
             )
             restored_alpha = (restored_alpha * float(opacity)).clamp(0.0, 1.0)
 
-        # Packed output is either content-sized or bottom-aligned on a fixed canvas.
+        # Packed panels can follow the preview, the source, or a fixed canvas.
         if enable_packed_output:
             packed_fg_resized = fg_resized
             packed_alpha = alpha
             packed_restored_fg = restored_fg_bchw
             packed_restored_alpha = restored_alpha
 
-            if packed_size_mode == "Fixed Canvas (1440x1280)" and packed_w != 720:
-                fixed_scale = 720.0 / float(fg_w)
-                fixed_h = max(1, int(round(fg_h * fixed_scale)))
+            panel_size = (resized_h, packed_w)
+            if packed_size_mode == "Fixed Canvas (1440x1280)":
+                panel_size = (max(1, int(round(fg_h * (720.0 / float(fg_w))))), 720)
+            elif packed_size_mode == "Original Size":
+                panel_size = (fg_h, fg_w)
+
+            if panel_size != (resized_h, packed_w):
                 packed_fg_resized = F.interpolate(
                     fg_bchw,
-                    size=(fixed_h, 720),
+                    size=panel_size,
                     mode="bilinear",
                     align_corners=False,
                 )
                 packed_alpha = self._ensure_mask(layer_mask, batch, fg_h, fg_w, device, dtype)
                 packed_alpha = F.interpolate(
                     packed_alpha,
-                    size=(fixed_h, 720),
+                    size=panel_size,
                     mode="bilinear",
                     align_corners=False,
                 )
@@ -685,7 +694,7 @@ class FastBottomFitOverlay:
                 if restored_fg is not None:
                     packed_restored_fg = F.interpolate(
                         restored_fg.permute(0, 3, 1, 2).contiguous(),
-                        size=(fixed_h, 720),
+                        size=panel_size,
                         mode="bilinear",
                         align_corners=False,
                     )
@@ -699,7 +708,7 @@ class FastBottomFitOverlay:
                     )
                     packed_restored_alpha = F.interpolate(
                         packed_restored_alpha,
-                        size=(fixed_h, 720),
+                        size=panel_size,
                         mode="bilinear",
                         align_corners=False,
                     )

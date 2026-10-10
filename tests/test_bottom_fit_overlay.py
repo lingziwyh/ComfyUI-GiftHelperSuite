@@ -14,6 +14,59 @@ from fast_bottom_fit_overlay import FastBottomFitOverlay  # noqa: E402
 
 
 class FastBottomFitOverlayTests(unittest.TestCase):
+    def test_original_size_preserves_source_pixels_above_1440(self):
+        background = torch.zeros(1, 16, 8, 3)
+        layer = torch.rand(1, 1501, 1441, 3)
+        layer_mask = torch.rand(1, 1501, 1441)
+
+        image, mask, packed = FastBottomFitOverlay().composite(
+            background, layer, layer_mask=layer_mask, packed_size_mode="Original Size"
+        )
+
+        self.assertEqual(tuple(image.shape), tuple(background.shape))
+        self.assertEqual(tuple(mask.shape), (1, 16, 8))
+        self.assertEqual(tuple(packed.shape), (1, 1501, 2882, 3))
+        self.assertTrue(torch.equal(packed[:, :, :1441], layer_mask[..., None].expand(-1, -1, -1, 3)))
+        self.assertTrue(torch.equal(packed[:, :, 1441:], layer * layer_mask[..., None]))
+
+    def test_original_size_does_not_upscale_or_pad_small_inputs(self):
+        background = torch.zeros(1, 32, 24, 3)
+        layer = torch.rand(1, 9, 7, 3)
+        packed = FastBottomFitOverlay().composite(
+            background, layer, packed_size_mode="Original Size"
+        )[2]
+
+        self.assertEqual(tuple(packed.shape), (1, 9, 14, 3))
+        self.assertTrue(torch.equal(packed[:, :, 7:], layer))
+
+    def test_original_size_retains_effects_foreground_and_batch_fades(self):
+        node = FastBottomFitOverlay()
+        layer = torch.rand(1, 21, 15, 3)
+        foreground = torch.rand(3, 21, 15, 3)
+        layer_mask = torch.rand(1, 21, 15)
+        foreground_mask = torch.rand(3, 21, 15)
+        for preset in node.PRESET_OPTIONS:
+            with self.subTest(preset=preset):
+                options = dict(
+                    layer_mask=layer_mask,
+                    foreground_image=foreground,
+                    foreground_mask=foreground_mask,
+                    preset=preset,
+                    opacity=0.7,
+                    center_scale=0.6,
+                    fade_frames=2,
+                )
+                expected = node.composite(torch.zeros_like(layer), layer, **options)[2]
+                image, mask, packed = node.composite(
+                    torch.zeros(1, 8, 6, 3), layer,
+                    packed_size_mode="Original Size", **options
+                )
+                self.assertEqual(tuple(packed.shape), (3, 21, 30, 3))
+                self.assertTrue(torch.equal(packed, expected))
+                preview = node.composite(torch.zeros(1, 8, 6, 3), layer, **options)
+                self.assertTrue(torch.equal(image, preview[0]))
+                self.assertTrue(torch.equal(mask, preview[1]))
+
     def test_half_scale_keeps_fitted_video_center_and_packed_panels_aligned(self):
         bg = torch.full((1, 12, 8, 3), 0.2)
         fg = torch.ones(2, 4, 8, 3)
@@ -88,6 +141,8 @@ class FastBottomFitOverlayTests(unittest.TestCase):
         self.assertNotIn("top_fade_ratio", required)
         self.assertTrue(required["clip_if_too_tall"][1]["advanced"])
         self.assertIn("packed_size_mode", optional)
+        self.assertIn("Original Size", optional["packed_size_mode"][0])
+        self.assertEqual(optional["packed_size_mode"][1]["default"], "Fit Content (Dynamic Height)")
         self.assertIn("fade_mode", optional)
         self.assertEqual(optional["fade_mode"][0], ["None", "Top Fade", "Rounded Rect"])
         self.assertIn("rounded_rect_fade_ratio", optional)
